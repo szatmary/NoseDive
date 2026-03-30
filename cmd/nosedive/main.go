@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/szatmary/nosedive/pkg/board"
 	"github.com/szatmary/nosedive/pkg/refloat"
 	"github.com/szatmary/nosedive/pkg/simulator"
 	"github.com/szatmary/nosedive/pkg/vesc"
@@ -21,6 +22,7 @@ func main() {
 	simBLE := flag.Bool("sim-ble", false, "Enable BLE on simulator (emulate VESC Express)")
 	simWeb := flag.Bool("web", false, "Enable web GUI for simulator")
 	webAddr := flag.String("web-addr", "127.0.0.1:8080", "Web GUI listen address")
+	profilePath := flag.String("profile", "", "Board profile JSON file")
 	bleName := flag.String("ble-name", "VESC SIM", "BLE device name for simulator")
 	bleScan := flag.Bool("ble-scan", false, "Scan for VESC BLE devices")
 	bleAddr := flag.String("ble", "", "Connect to VESC via BLE address")
@@ -47,7 +49,17 @@ func main() {
 	var simInstance *simulator.Simulator
 
 	if *sim {
-		simInstance = simulator.New()
+		if *profilePath != "" {
+			p, err := board.LoadProfile(*profilePath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to load profile: %v\n", err)
+				os.Exit(1)
+			}
+			simInstance = simulator.NewWithProfile(p)
+			fmt.Printf("Loaded profile: %s\n", p.Name)
+		} else {
+			simInstance = simulator.New()
+		}
 		if err := simInstance.Start(*simAddr); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to start simulator: %v\n", err)
 			os.Exit(1)

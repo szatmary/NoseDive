@@ -1,0 +1,64 @@
+{
+  "name": "Onewheel XR (VESC Conversion)",
+  "manufacturer": "Future Motion (converted)",
+  "model": "XR VESC Conversion",
+  "description": "Onewheel XR with stock motor converted to VESC controller",
+
+  "controller": {
+    "type": "Little FOCer V3.1",
+    "hardware": "VESC 6 compatible",
+    "firmware": {
+      "major": 6,
+      "minor": 5
+    },
+    "maxCurrent": 65,
+    "maxBrakeCurrent": -50
+  },
+
+  "motor": {
+    "type": "hub",
+    "name": "Onewheel XR Hypercore",
+    "polePairs": 15,
+    "resistance": 0.035,
+    "inductance": 0.000018,
+    "fluxLinkage": 0.010,
+    "maxCurrent": 55,
+    "maxBrakeCurrent": -35,
+    "kv": 70,
+    "hallSensorTable": [255, 1, 3, 2, 5, 6, 4, 255],
+    "notes": "Stock XR Hypercore motor, 15 pole pairs"
+  },
+
+  "battery": {
+    "chemistry": "Li-ion",
+    "cellType": "Sony VTC6",
+    "configuration": "15s2p",
+    "seriesCells": 15,
+    "parallelCells": 2,
+    "capacityAh": 6.0,
+    "capacityWh": 324,
+    "voltageMin": 45.0,
+    "voltageNominal": 54.0,
+    "voltageMax": 63.0,
+    "cutoffStart": 48.0,
+    "cutoffEnd": 45.0,
+    "maxDischargeCurrent": 60,
+    "maxChargeCurrent": 8,
+    "cellMinVoltage": 3.0,
+    "cellMaxVoltage": 4.2,
+    "cellNominalVoltage": 3.6
+  },
+
+  "wheel": {
+    "diameter": 11.5,
+    "diameterUnit": "inches",
+    "tirePressurePSI": 18,
+    "circumferenceM": 0.9173
+  },
+
+  "performance": {
+    "topSpeedMPH": 20,
+    "rangeMiles": 12,
+    "weightLbs": 27
+  }
+}

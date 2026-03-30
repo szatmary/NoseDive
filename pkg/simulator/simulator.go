@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/szatmary/nosedive/pkg/board"
 	"github.com/szatmary/nosedive/pkg/refloat"
 	"github.com/szatmary/nosedive/pkg/vesc"
 )
@@ -20,6 +21,7 @@ type Simulator struct {
 	listener net.Listener
 	mu       sync.Mutex
 	state    *BoardState
+	profile  *board.Profile // Optional board profile
 	running  bool
 	stop     chan struct{}
 	bleName  string // BLE device name (empty = no BLE)
@@ -125,12 +127,35 @@ func DefaultBoardState() *BoardState {
 	return bs
 }
 
-// New creates a new simulator.
+// New creates a new simulator with default board state.
 func New() *Simulator {
 	return &Simulator{
 		state: DefaultBoardState(),
 		stop:  make(chan struct{}),
 	}
+}
+
+// NewWithProfile creates a simulator initialized from a board profile.
+func NewWithProfile(p *board.Profile) *Simulator {
+	bs := DefaultBoardState()
+
+	// Apply profile values
+	bs.FWMajor = p.Controller.Firmware.Major
+	bs.FWMinor = p.Controller.Firmware.Minor
+	bs.HWName = p.Controller.Hardware
+	bs.Voltage = p.Battery.VoltageMax // Start fully charged
+
+	s := &Simulator{
+		state:   bs,
+		profile: p,
+		stop:    make(chan struct{}),
+	}
+	return s
+}
+
+// Profile returns the loaded board profile, if any.
+func (s *Simulator) Profile() *board.Profile {
+	return s.profile
 }
 
 // Start begins listening on the given address.

@@ -52,6 +52,9 @@ func (s *Simulator) WebAddr() string {
 
 // stateJSON is the JSON representation sent to the web GUI.
 type stateJSON struct {
+	// Profile info (empty if no profile loaded)
+	ProfileName string `json:"profileName,omitempty"`
+
 	// VESC
 	Voltage float64 `json:"voltage"`
 	Fault   string  `json:"fault"`
@@ -91,8 +94,8 @@ type stateJSON struct {
 	Tachometer  int32   `json:"tachometer"`
 }
 
-func boardStateToJSON(bs *BoardState) stateJSON {
-	return stateJSON{
+func (s *Simulator) boardStateToJSON(bs *BoardState) stateJSON {
+	sj := stateJSON{
 		Voltage:        bs.Voltage,
 		Fault:          bs.Fault.String(),
 		ERPM:           bs.ERPM,
@@ -118,6 +121,10 @@ func boardStateToJSON(bs *BoardState) stateJSON {
 		WattHours:      bs.WattHours,
 		Tachometer:     bs.Tachometer,
 	}
+	if s.profile != nil {
+		sj.ProfileName = s.profile.Name
+	}
+	return sj
 }
 
 // updateMessage is the JSON received from the web GUI.
@@ -287,7 +294,7 @@ func (s *Simulator) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				return
 			case <-ticker.C:
 				st := s.State()
-				data, _ := json.Marshal(boardStateToJSON(&st))
+				data, _ := json.Marshal(s.boardStateToJSON(&st))
 				writeMu.Lock()
 				err := wsWriteText(conn, data)
 				writeMu.Unlock()
