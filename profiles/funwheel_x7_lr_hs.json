@@ -1,50 +1,50 @@
 {
   "name": "Funwheel X7 Long Range (HS Motor)",
-  "manufacturer": "Funwheel",
-  "model": "X7 Long Range",
-  "description": "Funwheel X7 LR with Hypercore Stator high-speed motor",
+  "manufacturer": "Fungineers",
+  "model": "Funwheel X7 Long Range",
+  "description": "Funwheel X7 LR with Superflux HS Mk3 high-speed hub motor and Thor301 controller",
 
   "controller": {
-    "type": "Fungineers Ubox V2",
-    "hardware": "VESC 6 compatible",
+    "type": "Fungineers Thor301",
+    "hardware": "Thor301-20S",
     "firmware": {
       "major": 6,
       "minor": 5
     },
-    "maxCurrent": 80,
-    "maxBrakeCurrent": -60
+    "maxCurrent": 300,
+    "maxBrakeCurrent": -150
   },
 
   "motor": {
     "type": "hub",
-    "name": "Hypercore HS",
+    "name": "Superflux HS Mk3",
     "polePairs": 15,
-    "resistance": 0.025,
-    "inductance": 0.000012,
-    "fluxLinkage": 0.0085,
-    "maxCurrent": 65,
-    "maxBrakeCurrent": -40,
+    "resistance": 0.088,
+    "inductance": 0.000233,
+    "fluxLinkage": 0.028,
+    "maxCurrent": 80,
+    "maxBrakeCurrent": -60,
     "kv": 85,
     "hallSensorTable": [255, 1, 3, 2, 5, 6, 4, 255],
-    "notes": "HS (high-speed) variant has lower torque, higher top speed vs standard"
+    "notes": "Superflux HS (high-speed) Mk3 with Statorade cooling. Higher KV than HT variant. R/L/flux values from pev.dev Superflux Mk1 baseline — run detection for exact HS values."
   },
 
   "battery": {
     "chemistry": "Li-ion",
-    "cellType": "Molicel P42A",
-    "configuration": "20s4p",
+    "cellType": "Samsung INR21700-50S",
+    "configuration": "20s2p",
     "seriesCells": 20,
-    "parallelCells": 4,
-    "capacityAh": 16.8,
-    "capacityWh": 1210,
-    "voltageMin": 60.0,
+    "parallelCells": 2,
+    "capacityAh": 10.0,
+    "capacityWh": 720,
+    "voltageMin": 50.0,
     "voltageNominal": 72.0,
     "voltageMax": 84.0,
     "cutoffStart": 64.0,
     "cutoffEnd": 60.0,
-    "maxDischargeCurrent": 120,
-    "maxChargeCurrent": 20,
-    "cellMinVoltage": 3.0,
+    "maxDischargeCurrent": 50,
+    "maxChargeCurrent": 10,
+    "cellMinVoltage": 2.5,
     "cellMaxVoltage": 4.2,
     "cellNominalVoltage": 3.6
   },
@@ -53,12 +53,13 @@
     "diameter": 11.0,
     "diameterUnit": "inches",
     "tirePressurePSI": 20,
-    "circumferenceM": 0.8778
+    "circumferenceM": 0.8778,
+    "tireModel": "Fungineers Thunder"
   },
 
   "performance": {
-    "topSpeedMPH": 28,
-    "rangeMiles": 30,
-    "weightLbs": 35
+    "topSpeedMPH": 35,
+    "rangeMiles": 35,
+    "weightLbs": 39
   }
 }

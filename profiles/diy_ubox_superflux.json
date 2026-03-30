@@ -2,7 +2,7 @@
   "name": "DIY Ubox + Superflux",
   "manufacturer": "Custom",
   "model": "DIY Build",
-  "description": "Common DIY VESC build with Fungineers Ubox and Superflux hub motor",
+  "description": "Common DIY VESC build with Fungineers Ubox V2 and Superflux hub motor",
 
   "controller": {
     "type": "Fungineers Ubox V2",
@@ -17,21 +17,21 @@
 
   "motor": {
     "type": "hub",
-    "name": "Superflux",
+    "name": "Superflux HT Mk3",
     "polePairs": 15,
-    "resistance": 0.030,
-    "inductance": 0.000015,
-    "fluxLinkage": 0.012,
+    "resistance": 0.088,
+    "inductance": 0.000233,
+    "fluxLinkage": 0.028,
     "maxCurrent": 60,
     "maxBrakeCurrent": -40,
     "kv": 60,
     "hallSensorTable": [255, 1, 3, 2, 5, 6, 4, 255],
-    "notes": "Popular aftermarket motor, good torque and reliability"
+    "notes": "Superflux HT (high-torque) Mk3. R/L/flux values from pev.dev Superflux Mk1 baseline — run detection for exact values."
   },
 
   "battery": {
     "chemistry": "Li-ion",
-    "cellType": "Samsung 40T",
+    "cellType": "Samsung INR21700-40T",
     "configuration": "20s2p",
     "seriesCells": 20,
     "parallelCells": 2,
@@ -57,7 +57,7 @@
   },
 
   "performance": {
-    "topSpeedMPH": 22,
+    "topSpeedMPH": 25,
     "rangeMiles": 15,
     "weightLbs": 28
   }

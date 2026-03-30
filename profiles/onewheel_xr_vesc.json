@@ -2,7 +2,7 @@
   "name": "Onewheel XR (VESC Conversion)",
   "manufacturer": "Future Motion (converted)",
   "model": "XR VESC Conversion",
-  "description": "Onewheel XR with stock motor converted to VESC controller",
+  "description": "Onewheel XR with stock Hypercore motor converted to Little FOCer VESC controller",
 
   "controller": {
     "type": "Little FOCer V3.1",
@@ -19,14 +19,14 @@
     "type": "hub",
     "name": "Onewheel XR Hypercore",
     "polePairs": 15,
-    "resistance": 0.035,
-    "inductance": 0.000018,
-    "fluxLinkage": 0.010,
+    "resistance": 0.088,
+    "inductance": 0.000233,
+    "fluxLinkage": 0.028,
     "maxCurrent": 55,
     "maxBrakeCurrent": -35,
     "kv": 70,
     "hallSensorTable": [255, 1, 3, 2, 5, 6, 4, 255],
-    "notes": "Stock XR Hypercore motor, 15 pole pairs"
+    "notes": "Stock XR Hypercore motor. R/L/flux values from pev.dev Superflux Mk1 baseline — Hypercore is very similar. Run detection for exact values."
   },
 
   "battery": {

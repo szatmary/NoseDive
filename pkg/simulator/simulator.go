@@ -120,9 +120,9 @@ func DefaultBoardState() *BoardState {
 		PkgMinor:     0,
 		PkgPatch:     1,
 		PkgSuffix:    "sim",
-		MotorResistance:  0.030,                                              // 30 mOhm typical hub motor
-		MotorInductance:  0.000020,                                            // 20 uH
-		MotorFluxLinkage: 0.0070,                                              // 7.0 mWb
+		MotorResistance:  0.088,                                              // 88 mOhm typical Superflux/Hypercore
+		MotorInductance:  0.000233,                                            // 233 uH
+		MotorFluxLinkage: 0.028,                                               // 28 mWb
 		HallSensorTable:  [8]uint8{255, 1, 3, 2, 5, 6, 4, 255},               // typical hall table
 		MotorPolePairs:   15,                                                  // common for onewheel motors
 		ConfigXML:        compressConfigXML(refloatConfigXML),
