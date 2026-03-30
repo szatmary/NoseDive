@@ -135,9 +135,9 @@ Each command is identified by the first byte of the payload (`CommPacketID`).
 | var | 1 | HW type (0=VESC, 3=VESC Express) |
 | var | 1 | Custom config count (1 for Refloat) |
 | var | 1 | Has phase filters (0/1) |
-| var | 4 | QML HW UI size (uint32, 0 = none) |
-| var | 4 | QML App UI size (uint32, 0 = none) |
-| var | 1 | NRF flags |
+| var | 1 | QML HW UI (0=none, 1=has, 2=fullscreen) |
+| var | 1 | QML App UI (0=none, 1=has, 2=fullscreen) |
+| var | 1 | NRF flags (bit0=nameSupported, bit1=pinSupported) |
 | var | var | FW name (null-terminated string) |
 | var | 4 | HW CRC (uint32) |
 

@@ -40,21 +40,21 @@ func (s *Simulator) buildFWVersionResponse() []byte {
 	// Has phase filters (1 byte) - 0 = no
 	resp = append(resp, 0)
 
-	// QML HW size (4 bytes) - 0 = no QML HW UI
-	resp = append(resp, 0, 0, 0, 0)
+	// QML HW (1 byte) - 0=none, 1=has, 2=fullscreen
+	resp = append(resp, 0)
 
-	// QML App size (4 bytes) - 0 = no QML App UI
-	resp = append(resp, 0, 0, 0, 0)
+	// QML App (1 byte) - 0=none, 1=has, 2=fullscreen
+	resp = append(resp, 0)
 
-	// NRF flags (1 byte) - 0 = no NRF
+	// NRF flags (1 byte) - bit0=nameSupported, bit1=pinSupported
 	resp = append(resp, 0)
 
 	// FW name (null-terminated) - "Refloat" package name
 	resp = append(resp, []byte("Refloat")...)
 	resp = append(resp, 0)
 
-	// HW CRC (4 bytes) - dummy CRC
-	resp = append(resp, 0, 0, 0, 0)
+	// HW config CRC (4 bytes) - used for caching
+	resp = vesc.AppendUint32(resp, 0xDEADBEEF)
 
 	return resp
 }
@@ -329,46 +329,47 @@ func (s *Simulator) buildGetBatteryCutResponse() []byte {
 }
 
 // buildGetStatsResponse returns usage statistics.
+// Request: [cmd][mask:uint16], Response: [cmd][mask:uint32][fields...]
 func (s *Simulator) buildGetStatsResponse(payload []byte) []byte {
 	resp := []byte{byte(vesc.CommGetStats)}
 
-	mask := uint16(0xFFFF)
+	mask := uint32(0x07FF) // all 11 bits
 	if len(payload) > 2 {
-		mask = uint16(payload[1])<<8 | uint16(payload[2])
+		mask = uint32(uint16(payload[1])<<8 | uint16(payload[2]))
 	}
-	resp = vesc.AppendUint16(resp, uint16(mask))
+	resp = vesc.AppendUint32(resp, mask)
 
-	// Bit 0: speed_total (float32_auto)
+	// Bit 0: speed_avg (float32_auto)
 	if mask&(1<<0) != 0 {
 		resp = appendFloat32Auto(resp, 0)
 	}
-	// Bit 1: speed_count (float32_auto)
+	// Bit 1: speed_max (float32_auto)
 	if mask&(1<<1) != 0 {
 		resp = appendFloat32Auto(resp, 0)
 	}
-	// Bit 2: distance_total (float32_auto)
+	// Bit 2: power_avg (float32_auto)
 	if mask&(1<<2) != 0 {
 		resp = appendFloat32Auto(resp, 0)
 	}
-	// Bit 3: current_total (float32_auto)
+	// Bit 3: power_max (float32_auto)
 	if mask&(1<<3) != 0 {
 		resp = appendFloat32Auto(resp, 0)
 	}
-	// Bit 4: charge_total (float32_auto)
+	// Bit 4: current_avg (float32_auto)
 	if mask&(1<<4) != 0 {
 		resp = appendFloat32Auto(resp, 0)
 	}
-	// Bit 5: watt_hours (float32_auto)
+	// Bit 5: current_max (float32_auto)
 	if mask&(1<<5) != 0 {
 		resp = appendFloat32Auto(resp, 0)
 	}
-	// Bit 6: watt_hours_charged (float32_auto)
+	// Bit 6: temp_mos_avg (float32_auto)
 	if mask&(1<<6) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.MOSFETTemp)
 	}
-	// Bit 7: count_time (float32_auto)
+	// Bit 7: temp_mos_max (float32_auto)
 	if mask&(1<<7) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.MOSFETTemp)
 	}
 	// Bit 8: temp_motor_avg (float32_auto)
 	if mask&(1<<8) != 0 {
