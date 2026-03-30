@@ -89,6 +89,134 @@ double nd_profile_erpm_per_mps(const nd_profile_t* p);
 double nd_profile_speed_from_erpm(const nd_profile_t* p, double erpm);
 double nd_profile_battery_percentage(const nd_profile_t* p, double voltage);
 
+// --- Packet decoder (push-based, for BLE chunk reassembly) ---
+
+typedef struct nd_decoder nd_decoder_t;
+
+nd_decoder_t* nd_decoder_create(void);
+void nd_decoder_destroy(nd_decoder_t* d);
+
+// Feed raw BLE bytes. Returns number of complete packets now available.
+int nd_decoder_feed(nd_decoder_t* d, const uint8_t* data, size_t len);
+
+// Pop next complete payload. Caller must free with nd_free().
+// Returns NULL if no packet available. Sets *out_len.
+uint8_t* nd_decoder_pop(nd_decoder_t* d, size_t* out_len);
+
+// Number of complete packets available.
+size_t nd_decoder_count(const nd_decoder_t* d);
+
+void nd_decoder_reset(nd_decoder_t* d);
+
+// --- Refloat ---
+
+typedef struct {
+    // State
+    uint8_t run_state;   // RunState enum
+    uint8_t mode;        // Mode enum
+    uint8_t sat;         // SAT enum
+    uint8_t stop;        // StopCondition enum
+    uint8_t footpad;     // FootpadState enum
+
+    // Motor
+    double speed;
+    double erpm;
+    double motor_current;
+    double dir_current;
+    double filt_current;
+    double duty_cycle;
+    double batt_voltage;
+    double batt_current;
+    double mosfet_temp;
+    double motor_temp;
+
+    // IMU
+    double pitch;
+    double balance_pitch;
+    double roll;
+
+    // Footpad ADC
+    double adc1;
+    double adc2;
+
+    // Remote
+    double remote_input;
+
+    // Setpoints
+    double setpoint;
+    double atr_setpoint;
+    double brake_tilt_setpoint;
+    double torque_tilt_setpoint;
+    double turn_tilt_setpoint;
+    double remote_setpoint;
+    double balance_current;
+    double atr_accel_diff;
+    double atr_speed_boost;
+    double booster_current;
+} nd_refloat_rtdata_t;
+
+typedef struct {
+    char name[21];
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    char suffix[21];
+} nd_refloat_info_t;
+
+// Parse Refloat COMMAND_GET_ALLDATA response. Returns false on error.
+bool nd_refloat_parse_all_data(const uint8_t* data, size_t len, uint8_t mode,
+                                nd_refloat_rtdata_t* out);
+
+// Parse Refloat COMMAND_GET_RTDATA response. Returns false on error.
+bool nd_refloat_parse_rt_data(const uint8_t* data, size_t len,
+                               nd_refloat_rtdata_t* out);
+
+// Parse Refloat COMMAND_INFO response. Returns false on error.
+bool nd_refloat_parse_info(const uint8_t* data, size_t len, nd_refloat_info_t* out);
+
+// Build Refloat commands. Caller must free with nd_free(). Sets *out_len.
+uint8_t* nd_refloat_build_get_all_data(uint8_t mode, size_t* out_len);
+uint8_t* nd_refloat_build_get_rt_data(size_t* out_len);
+uint8_t* nd_refloat_build_info_request(size_t* out_len);
+
+// --- BLE Transport ---
+// Bridges C++ protocol handling with platform-native BLE stacks.
+// The transport handles VESC packet framing, MTU chunking, and reassembly.
+
+typedef struct nd_transport nd_transport_t;
+
+// Callback types (set by platform code)
+typedef void (*nd_send_callback_t)(const uint8_t* data, size_t len, void* ctx);
+typedef void (*nd_packet_callback_t)(const uint8_t* payload, size_t len, void* ctx);
+
+// Create transport with given BLE MTU (typically 20 for NUS).
+nd_transport_t* nd_transport_create(size_t mtu);
+void nd_transport_destroy(nd_transport_t* t);
+
+// Set the callback that writes raw bytes to the BLE characteristic.
+// ctx is passed through to every callback invocation.
+void nd_transport_set_send_callback(nd_transport_t* t, nd_send_callback_t cb, void* ctx);
+
+// Set the callback invoked when a complete VESC packet payload arrives.
+void nd_transport_set_packet_callback(nd_transport_t* t, nd_packet_callback_t cb, void* ctx);
+
+// Update MTU after negotiation.
+void nd_transport_set_mtu(nd_transport_t* t, size_t mtu);
+
+// Feed raw bytes from a BLE notification. Triggers packet callback if complete.
+void nd_transport_receive(nd_transport_t* t, const uint8_t* data, size_t len);
+
+// Send a VESC payload (auto-framed and chunked to MTU).
+bool nd_transport_send_payload(nd_transport_t* t, const uint8_t* payload, size_t len);
+
+// Send a single command byte.
+bool nd_transport_send_command(nd_transport_t* t, uint8_t cmd);
+
+// Send COMM_CUSTOM_APP_DATA wrapping the given data.
+bool nd_transport_send_custom_app_data(nd_transport_t* t, const uint8_t* data, size_t len);
+
+void nd_transport_reset(nd_transport_t* t);
+
 #ifdef __cplusplus
 }
 #endif

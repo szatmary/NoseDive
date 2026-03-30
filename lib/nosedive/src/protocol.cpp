@@ -1,5 +1,5 @@
-#include "nosedive/protocol.h"
-#include "nosedive/crc.h"
+#include "nosedive/protocol.hpp"
+#include "nosedive/crc.hpp"
 
 namespace nosedive {
 
@@ -188,6 +188,33 @@ std::string Buffer::read_string() {
     std::string s(data_.begin() + start, data_.begin() + read_pos_);
     if (read_pos_ < data_.size()) read_pos_++; // skip null
     return s;
+}
+
+// --- PacketDecoder implementation ---
+
+void PacketDecoder::feed(const uint8_t* data, size_t len) {
+    buf_.insert(buf_.end(), data, data + len);
+
+    // Try to extract complete packets from the buffer
+    while (!buf_.empty()) {
+        auto result = decode_packet(buf_.data(), buf_.size());
+        if (!result) break;
+
+        packets_.push_back(std::move(result->payload));
+        buf_.erase(buf_.begin(), buf_.begin() + static_cast<ptrdiff_t>(result->bytes_consumed));
+    }
+}
+
+std::vector<uint8_t> PacketDecoder::pop() {
+    if (packets_.empty()) return {};
+    auto pkt = std::move(packets_.front());
+    packets_.erase(packets_.begin());
+    return pkt;
+}
+
+void PacketDecoder::reset() {
+    buf_.clear();
+    packets_.clear();
 }
 
 } // namespace nosedive

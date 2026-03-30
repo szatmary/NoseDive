@@ -1,4 +1,4 @@
-#include "nosedive/profile.h"
+#include "nosedive/profile.hpp"
 #include <fstream>
 #include <sstream>
 #include <algorithm>

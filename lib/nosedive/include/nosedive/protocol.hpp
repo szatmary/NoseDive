@@ -28,6 +28,35 @@ struct DecodeResult {
 // Try to decode one VESC packet from a buffer. Returns nullopt if incomplete.
 std::optional<DecodeResult> decode_packet(const uint8_t* data, size_t len);
 
+// --- Push-based packet decoder for BLE chunk reassembly ---
+// BLE delivers data in ~20-byte chunks. This decoder accumulates bytes and
+// emits complete packets as they arrive. Thread-safe if externally synchronized.
+
+class PacketDecoder {
+public:
+    PacketDecoder() = default;
+
+    // Feed raw bytes from BLE notifications. After feeding, call pop() to
+    // retrieve complete packets.
+    void feed(const uint8_t* data, size_t len);
+
+    // Returns true if at least one complete packet is available.
+    bool has_packet() const { return !packets_.empty(); }
+
+    // Number of complete packets ready to pop.
+    size_t packet_count() const { return packets_.size(); }
+
+    // Pop the next complete payload (FIFO). Returns empty if none available.
+    std::vector<uint8_t> pop();
+
+    // Discard all buffered data and queued packets.
+    void reset();
+
+private:
+    std::vector<uint8_t> buf_;     // accumulation buffer
+    std::vector<std::vector<uint8_t>> packets_; // complete payloads
+};
+
 // --- Big-endian buffer helpers (matching VESC buffer.h) ---
 
 class Buffer {

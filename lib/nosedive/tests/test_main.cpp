@@ -1,5 +1,5 @@
 // Minimal test runner — no dependencies
-#include "nosedive/nosedive.h"
+#include "nosedive/nosedive.hpp"
 #include "nosedive/ffi.h"
 #include <cstdio>
 #include <cstdlib>
@@ -233,6 +233,192 @@ static void test_profile_load() {
     nd_profile_free(p);
 }
 
+// --- PacketDecoder tests ---
+static void test_packet_decoder_single() {
+    nosedive::PacketDecoder dec;
+
+    uint8_t payload[] = {0x04, 0x01};
+    auto pkt = nosedive::encode_packet(payload, 2);
+
+    dec.feed(pkt.data(), pkt.size());
+    ASSERT(dec.has_packet(), "decoder has packet after full feed");
+    ASSERT_EQ(dec.packet_count(), 1u, "decoder count = 1");
+
+    auto p = dec.pop();
+    ASSERT_EQ(p.size(), 2u, "decoded payload size");
+    ASSERT_EQ(p[0], 0x04, "decoded payload byte 0");
+    ASSERT_EQ(p[1], 0x01, "decoded payload byte 1");
+    ASSERT(!dec.has_packet(), "decoder empty after pop");
+}
+
+static void test_packet_decoder_chunked() {
+    // Simulate BLE 20-byte MTU chunking
+    nosedive::PacketDecoder dec;
+
+    std::vector<uint8_t> payload(100, 0xAA);
+    payload[0] = 0x14;
+    auto pkt = nosedive::encode_packet(payload.data(), payload.size());
+
+    // Feed in 20-byte chunks
+    size_t offset = 0;
+    while (offset < pkt.size()) {
+        size_t chunk = std::min(size_t(20), pkt.size() - offset);
+        dec.feed(pkt.data() + offset, chunk);
+        offset += chunk;
+    }
+
+    ASSERT(dec.has_packet(), "decoder reassembled chunked packet");
+    auto p = dec.pop();
+    ASSERT_EQ(p.size(), 100u, "reassembled payload size");
+    ASSERT_EQ(p[0], 0x14, "reassembled payload first byte");
+}
+
+static void test_packet_decoder_multiple() {
+    nosedive::PacketDecoder dec;
+
+    uint8_t p1[] = {0x04};
+    uint8_t p2[] = {0x00};
+    auto pkt1 = nosedive::encode_packet(p1, 1);
+    auto pkt2 = nosedive::encode_packet(p2, 1);
+
+    // Feed both packets in one call
+    std::vector<uint8_t> combined;
+    combined.insert(combined.end(), pkt1.begin(), pkt1.end());
+    combined.insert(combined.end(), pkt2.begin(), pkt2.end());
+    dec.feed(combined.data(), combined.size());
+
+    ASSERT_EQ(dec.packet_count(), 2u, "decoder found 2 packets");
+    auto r1 = dec.pop();
+    ASSERT_EQ(r1[0], 0x04, "first packet cmd");
+    auto r2 = dec.pop();
+    ASSERT_EQ(r2[0], 0x00, "second packet cmd");
+}
+
+// --- Refloat tests ---
+static void test_refloat_command_builders() {
+    auto cmd = nosedive::refloat::build_get_all_data(2);
+    ASSERT_EQ(cmd.size(), 3u, "get_all_data size");
+    ASSERT_EQ(cmd[0], 0x65, "magic byte");
+    ASSERT_EQ(cmd[1], 10, "command ID = GetAllData");
+    ASSERT_EQ(cmd[2], 2, "mode byte");
+
+    auto rt_cmd = nosedive::refloat::build_get_rt_data();
+    ASSERT_EQ(rt_cmd.size(), 2u, "get_rt_data size");
+    ASSERT_EQ(rt_cmd[0], 0x65, "rt magic");
+    ASSERT_EQ(rt_cmd[1], 1, "rt command ID");
+
+    auto info_cmd = nosedive::refloat::build_info_request();
+    ASSERT_EQ(info_cmd.size(), 3u, "info request size");
+    ASSERT_EQ(info_cmd[0], 0x65, "info magic");
+    ASSERT_EQ(info_cmd[1], 0, "info command ID");
+    ASSERT_EQ(info_cmd[2], 2, "info version");
+}
+
+static void test_refloat_compat_decoders() {
+    using namespace nosedive::refloat;
+
+    // State compat: 0 = startup
+    ASSERT(decode_state_compat(0) == RunState::Startup, "compat state 0 = startup");
+    // State compat: 1-5 = running
+    ASSERT(decode_state_compat(1) == RunState::Running, "compat state 1 = running");
+    ASSERT(decode_state_compat(5) == RunState::Running, "compat state 5 = running");
+    // State compat: 15 = disabled
+    ASSERT(decode_state_compat(15) == RunState::Disabled, "compat state 15 = disabled");
+
+    // Stop compat
+    ASSERT(decode_stop_compat(6) == StopCondition::Pitch, "stop 6 = pitch");
+    ASSERT(decode_stop_compat(9) == StopCondition::SwitchFull, "stop 9 = switch_full");
+    ASSERT(decode_stop_compat(0) == StopCondition::None, "stop 0 = none");
+
+    // SAT compat
+    ASSERT(decode_sat_compat(0) == SAT::Centering, "sat 0 = centering");
+    ASSERT(decode_sat_compat(2) == SAT::None, "sat 2 = none");
+    ASSERT(decode_sat_compat(7) == SAT::PBSpeed, "sat 7 = pb_speed");
+}
+
+// --- BLE Transport test ---
+static void test_ble_transport() {
+    nosedive::BLETransport transport(20);
+
+    // Track what gets sent
+    std::vector<std::vector<uint8_t>> sent_chunks;
+    transport.set_send_callback([&](const uint8_t* data, size_t len) {
+        sent_chunks.emplace_back(data, data + len);
+    });
+
+    // Track received packets
+    std::vector<std::vector<uint8_t>> received;
+    transport.set_packet_callback([&](const uint8_t* payload, size_t len) {
+        received.emplace_back(payload, payload + len);
+    });
+
+    // Send a payload — should chunk to MTU
+    uint8_t payload[] = {0x04};
+    ASSERT(transport.send_payload(payload, 1), "send_payload returns true");
+    ASSERT(!sent_chunks.empty(), "send callback was called");
+
+    // Now simulate receiving the same data back
+    for (auto& chunk : sent_chunks) {
+        transport.on_ble_receive(chunk.data(), chunk.size());
+    }
+    ASSERT_EQ(received.size(), 1u, "received one packet");
+    ASSERT_EQ(received[0].size(), 1u, "received payload size");
+    ASSERT_EQ(received[0][0], 0x04, "received payload content");
+}
+
+static void test_ffi_decoder() {
+    nd_decoder_t* d = nd_decoder_create();
+    ASSERT(d != nullptr, "decoder create non-null");
+
+    uint8_t payload[] = {0x04};
+    size_t pkt_len = 0;
+    uint8_t* pkt = nd_encode_packet(payload, 1, &pkt_len);
+
+    int count = nd_decoder_feed(d, pkt, pkt_len);
+    ASSERT_EQ(count, 1, "ffi decoder feed returns 1");
+    ASSERT_EQ(nd_decoder_count(d), 1u, "ffi decoder count");
+
+    size_t out_len = 0;
+    uint8_t* result = nd_decoder_pop(d, &out_len);
+    ASSERT(result != nullptr, "ffi decoder pop non-null");
+    ASSERT_EQ(out_len, 1u, "ffi decoder pop len");
+    ASSERT_EQ(result[0], 0x04, "ffi decoder pop content");
+
+    nd_free(result);
+    nd_free(pkt);
+    nd_decoder_destroy(d);
+}
+
+static void test_ffi_transport() {
+    nd_transport_t* t = nd_transport_create(20);
+    ASSERT(t != nullptr, "transport create non-null");
+
+    // Set up send callback
+    static std::vector<uint8_t> all_sent;
+    all_sent.clear();
+    nd_transport_set_send_callback(t, [](const uint8_t* data, size_t len, void*) {
+        all_sent.insert(all_sent.end(), data, data + len);
+    }, nullptr);
+
+    // Set up receive callback
+    static std::vector<uint8_t> last_payload;
+    last_payload.clear();
+    nd_transport_set_packet_callback(t, [](const uint8_t* payload, size_t len, void*) {
+        last_payload.assign(payload, payload + len);
+    }, nullptr);
+
+    // Send a command
+    ASSERT(nd_transport_send_command(t, 0x04), "transport send_command");
+    ASSERT(!all_sent.empty(), "transport sent data");
+
+    // Feed the sent data back as received
+    nd_transport_receive(t, all_sent.data(), all_sent.size());
+    ASSERT_EQ(last_payload.size(), 1u, "transport received payload size");
+    ASSERT_EQ(last_payload[0], 0x04, "transport received payload content");
+
+    nd_transport_destroy(t);
+}
+
 int main() {
     test_crc16();
     test_packet_roundtrip_short();
@@ -244,6 +430,14 @@ int main() {
     test_buffer_string();
     test_ffi_packet();
     test_profile_load();
+    test_packet_decoder_single();
+    test_packet_decoder_chunked();
+    test_packet_decoder_multiple();
+    test_refloat_command_builders();
+    test_refloat_compat_decoders();
+    test_ble_transport();
+    test_ffi_decoder();
+    test_ffi_transport();
 
     std::printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

@@ -1,5 +1,5 @@
-#include "nosedive/commands.h"
-#include "nosedive/protocol.h"
+#include "nosedive/commands.hpp"
+#include "nosedive/protocol.hpp"
 #include <optional>
 
 namespace nosedive {

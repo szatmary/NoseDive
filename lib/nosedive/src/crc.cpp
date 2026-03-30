@@ -1,4 +1,4 @@
-#include "nosedive/crc.h"
+#include "nosedive/crc.hpp"
 
 namespace nosedive {
 

@@ -10,6 +10,8 @@ set(NOSEDIVE_SOURCES
     src/protocol.cpp
     src/commands.cpp
     src/profile.cpp
+    src/refloat.cpp
+    src/ble_transport.cpp
 )
 
 # Static library
