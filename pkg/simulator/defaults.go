@@ -95,8 +95,9 @@ func (c *configParams) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 //   - vTx=1 (uint8): 1 byte
 //   - vTx=2 (int8): 1 byte
 //   - vTx=3 (uint16): 2 bytes big-endian
-//   - vTx=7 (float32_auto): 5 bytes (1 scale + 4 int32)
-//   - bool/enum with no vTx: 1 byte (uint8)
+//   - vTx=7 (float32_auto): 4 bytes (IEEE754 float32 big-endian)
+//   - enum (type=4): 1 byte (uint8)
+//   - bool (type=5): 1 byte (uint8)
 func generateDefaultConfig(xmlData []byte) []byte {
 	var cfg configParams
 	if err := xml.Unmarshal(xmlData, &cfg); err != nil {
@@ -121,7 +122,7 @@ func generateDefaultConfig(xmlData []byte) []byte {
 		}
 
 		switch p.Type {
-		case 0: // int
+		case 0, 2: // int (type=0 generic, type=2 VESC int with vTx)
 			switch vtx {
 			case 1: // uint8
 				buf = append(buf, uint8(parseInt32(p.ValInt)))
@@ -136,11 +137,11 @@ func generateDefaultConfig(xmlData []byte) []byte {
 			}
 		case 1: // double → float32_auto
 			buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
-		case 2: // enum → uint8
-			buf = append(buf, uint8(parseInt32(p.ValEnum)))
 		case 3: // string → skip
 			continue
-		case 4: // bool → uint8
+		case 4: // enum → uint8
+			buf = append(buf, uint8(parseInt32(p.ValEnum)))
+		case 5: // bool → uint8
 			v := uint8(0)
 			if p.ValBool == "1" || p.ValBool == "true" {
 				v = 1
