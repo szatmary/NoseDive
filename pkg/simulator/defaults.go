@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"compress/zlib"
 	_ "embed"
-	"encoding/binary"
 	"encoding/xml"
 	"log"
 	"strconv"
@@ -14,6 +13,12 @@ import (
 
 //go:embed refloat_settings.xml
 var refloatConfigXML []byte
+
+//go:embed mcconf_default.xml
+var mcconfDefaultXML []byte
+
+//go:embed appconf_default.xml
+var appconfDefaultXML []byte
 
 // compressConfigXML compresses the XML using zlib and prepends the
 // 3-byte big-endian uncompressed length, matching VESC's confxml.c wire format.
@@ -36,16 +41,17 @@ func compressConfigXML(xmlData []byte) []byte {
 
 // configParam represents a single parameter from the VESC config XML.
 type configParam struct {
-	XMLName       xml.Name
-	LongName      string `xml:"longName"`
-	Type          int    `xml:"type"`
-	Transmittable *int   `xml:"transmittable"`
-	VTx           *int   `xml:"vTx"`
-	ValDouble     string `xml:"valDouble"`
-	ValInt        string `xml:"valInt"`
-	ValString     string `xml:"valString"`
-	ValBool       string `xml:"valBool"`
-	ValEnum       string `xml:"valEnum"`
+	XMLName        xml.Name
+	LongName       string `xml:"longName"`
+	Type           int    `xml:"type"`
+	Transmittable  *int   `xml:"transmittable"`
+	VTx            *int   `xml:"vTx"`
+	VTxDoubleScale string `xml:"vTxDoubleScale"`
+	ValDouble      string `xml:"valDouble"`
+	ValInt         string `xml:"valInt"`
+	ValString      string `xml:"valString"`
+	ValBool        string `xml:"valBool"`
+	ValEnum        string `xml:"valEnum"`
 }
 
 // configParams wraps the XML. Go's encoding/xml doesn't support wildcard
@@ -86,18 +92,34 @@ func (c *configParams) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 	}
 }
 
-// generateDefaultConfig parses the Refloat settings XML and serializes
-// default values in the same order/format as VESC's confparser.
+// generateDefaultConfig parses a VESC config XML and serializes default
+// values in the same order/format as VESC's confparser/confgenerator.
 //
 // The binary format starts with a 4-byte SIGNATURE (CRC of XML content),
-// followed by each transmittable field serialized according to its vTx type:
+// followed by each transmittable field serialized according to its type/vTx:
 //
-//   - vTx=1 (uint8): 1 byte
-//   - vTx=2 (int8): 1 byte
-//   - vTx=3 (uint16): 2 bytes big-endian
-//   - vTx=7 (float32_auto): 4 bytes (IEEE754 float32 big-endian)
-//   - enum (type=4): 1 byte (uint8)
-//   - bool (type=5): 1 byte (uint8)
+// Integer types (type=0, type=2) use vTx to determine wire size:
+//
+//   - vTx=1: uint8 (1 byte)
+//   - vTx=2: int8 (1 byte)
+//   - vTx=3: uint16 (2 bytes)
+//   - vTx=4: int16 (2 bytes)
+//   - vTx=5: int32 (4 bytes)
+//   - vTx=6: uint32 (4 bytes)
+//   - vTx=7: float32_auto (4 bytes, IEEE754)
+//
+// Double types (type=1) use vTx to determine encoding:
+//
+//   - vTx=7: float32_auto (4 bytes, IEEE754)
+//   - vTx=8: float16 scaled (2 bytes, int16(val*scale))
+//   - vTx=9: float32 scaled (4 bytes, int32(val*scale))
+//
+// Other types:
+//
+//   - type=4 (enum): uint8 (1 byte)
+//   - type=5 (bool): uint8 (1 byte)
+//   - type=6 (bitfield): uint8 (1 byte)
+//   - type=3 (string): skipped
 func generateDefaultConfig(xmlData []byte) []byte {
 	var cfg configParams
 	if err := xml.Unmarshal(xmlData, &cfg); err != nil {
@@ -122,7 +144,7 @@ func generateDefaultConfig(xmlData []byte) []byte {
 		}
 
 		switch p.Type {
-		case 0, 2: // int (type=0 generic, type=2 VESC int with vTx)
+		case 0, 2: // int
 			switch vtx {
 			case 1: // uint8
 				buf = append(buf, uint8(parseInt32(p.ValInt)))
@@ -130,13 +152,28 @@ func generateDefaultConfig(xmlData []byte) []byte {
 				buf = append(buf, uint8(int8(parseInt32(p.ValInt))))
 			case 3: // uint16
 				buf = vesc.AppendUint16(buf, uint16(parseInt32(p.ValInt)))
+			case 4: // int16
+				buf = vesc.AppendInt16(buf, int16(parseInt32(p.ValInt)))
+			case 5: // int32
+				buf = vesc.AppendInt32(buf, parseInt32(p.ValInt))
+			case 6: // uint32
+				buf = vesc.AppendUint32(buf, uint32(parseInt32(p.ValInt)))
 			case 7: // float32_auto
 				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValInt))
-			default: // default: uint8 for small ints
+			default: // default: uint8
 				buf = append(buf, uint8(parseInt32(p.ValInt)))
 			}
-		case 1: // double → float32_auto
-			buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
+		case 1: // double
+			switch vtx {
+			case 8: // float16 scaled: int16(val * scale)
+				scale := parseFloat64(p.VTxDoubleScale)
+				buf = vesc.AppendInt16(buf, int16(parseFloat64(p.ValDouble)*scale))
+			case 9: // float32 scaled: int32(val * scale)
+				scale := parseFloat64(p.VTxDoubleScale)
+				buf = vesc.AppendInt32(buf, int32(parseFloat64(p.ValDouble)*scale))
+			default: // vTx=7 or unspecified: float32_auto (IEEE754)
+				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
+			}
 		case 3: // string → skip
 			continue
 		case 4: // enum → uint8
@@ -147,6 +184,8 @@ func generateDefaultConfig(xmlData []byte) []byte {
 				v = 1
 			}
 			buf = append(buf, v)
+		case 6: // bitfield → uint8
+			buf = append(buf, uint8(parseInt32(p.ValInt)))
 		}
 	}
 
@@ -175,23 +214,14 @@ func parseFloat64(s string) float64 {
 	return v
 }
 
-// generateDefaultMCConf creates a motor controller config blob.
-// The real MC_CONF uses the confparser-generated serialization format with
-// a signature CRC prefix. We generate a zeroed blob of the right size.
-// VESC Tool may fail to parse it (signature mismatch), which is acceptable
-// for simulation since the Refloat custom config is what matters.
+// generateDefaultMCConf creates a motor controller config blob from the
+// embedded MC_CONF XML (parameters_mcconf.xml for FW 6.05).
 func generateDefaultMCConf() []byte {
-	// For VESC FW 6.5, MC_CONF is approximately 488 bytes
-	buf := make([]byte, 488)
-	// Signature at offset 0 (4 bytes) - dummy
-	binary.BigEndian.PutUint32(buf[0:], 0)
-	return buf
+	return generateDefaultConfig(mcconfDefaultXML)
 }
 
-// generateDefaultAppConf creates an app config blob.
+// generateDefaultAppConf creates an app config blob from the
+// embedded APP_CONF XML (parameters_appconf.xml for FW 6.05).
 func generateDefaultAppConf() []byte {
-	// For VESC FW 6.5, APP_CONF is approximately 360 bytes
-	buf := make([]byte, 360)
-	binary.BigEndian.PutUint32(buf[0:], 0)
-	return buf
+	return generateDefaultConfig(appconfDefaultXML)
 }
