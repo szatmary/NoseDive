@@ -386,67 +386,68 @@ func (s *Simulator) handleCustomAppData(data []byte) []byte {
 		}
 		return s.buildRefloatAllDataResponse(mode)
 	case refloat.CommandRTTune:
-		return s.buildRefloatRTTuneResponse()
+		return nil // fire-and-forget: applies tune values at runtime
 	case refloat.CommandTuneDefaults:
-		return s.buildRefloatTuneDefaultsResponse()
+		return nil // fire-and-forget: resets tune to defaults
 	case refloat.CommandTuneOther:
-		return s.buildRefloatTuneOtherResponse()
+		return nil // fire-and-forget: applies startup/tilt tune
 	case refloat.CommandTuneTilt:
-		return s.buildRefloatTuneTiltResponse()
+		return nil // fire-and-forget: applies tilt/duty tune
 	case refloat.CommandCfgSave:
 		log.Printf("simulator: refloat config save requested")
-		return nil // accept silently
+		return nil
 	case refloat.CommandCfgRestore:
 		log.Printf("simulator: refloat config restore requested")
 		return nil
 	case refloat.CommandRCMove:
-		// Remote control move command - accept silently
-		return nil
+		return nil // fire-and-forget
 	case refloat.CommandBooster:
-		return nil // accept
+		return nil // fire-and-forget
 	case refloat.CommandPrintInfo:
-		return s.buildRefloatInfoResponse()
+		return nil // no-op in Refloat source
 	case refloat.CommandExperiment:
-		return nil
+		return nil // no-op
 	case refloat.CommandLock:
-		return nil // accept lock/unlock
+		return nil // fire-and-forget
 	case refloat.CommandHandtest:
-		// Toggle handtest mode
-		if s.state.Mode == refloat.ModeHandtest {
-			s.state.Mode = refloat.ModeNormal
-		} else {
-			s.state.Mode = refloat.ModeHandtest
+		if len(data) > 2 {
+			if data[2] != 0 {
+				s.state.Mode = refloat.ModeHandtest
+			} else {
+				s.state.Mode = refloat.ModeNormal
+			}
 		}
-		return nil
+		return nil // fire-and-forget
 	case refloat.CommandFlywheel:
+		// Requires specific flag format; simplified for sim
 		if s.state.Mode == refloat.ModeFlywheel {
 			s.state.Mode = refloat.ModeNormal
 		} else {
 			s.state.Mode = refloat.ModeFlywheel
 		}
-		return nil
+		return nil // fire-and-forget
 	case refloat.CommandLightsControl:
-		return nil // accept
+		return s.buildRefloatLightsControlResponse(data)
 	case refloat.CommandLCMPoll:
 		return s.buildRefloatLCMPollResponse()
 	case refloat.CommandLCMLightInfo:
-		return nil
+		return s.buildRefloatLCMLightInfoResponse()
 	case refloat.CommandLCMLightCtrl:
-		return nil
+		return nil // fire-and-forget
 	case refloat.CommandLCMDeviceInfo:
 		return s.buildRefloatLCMDeviceInfoResponse()
 	case refloat.CommandChargingState:
-		return s.buildRefloatChargingStateResponse()
+		return nil // fire-and-forget: updates charging state from LCM
 	case refloat.CommandLCMGetBattery:
 		return s.buildRefloatBatteryResponse()
 	case refloat.CommandRealtimeData:
-		return s.buildRefloatRTDataResponse()
+		return s.buildRefloatRealtimeDataResponse()
 	case refloat.CommandRealtimeDataIDs:
-		return s.buildRefloatRTDataResponse()
+		return s.buildRefloatRealtimeDataIDsResponse()
 	case refloat.CommandAlertsList:
 		return s.buildRefloatAlertsResponse()
 	case refloat.CommandAlertsControl:
-		return nil // accept
+		return nil // fire-and-forget
 	case refloat.CommandDataRecordReq:
 		return nil // no data recording in sim
 	default:
@@ -602,81 +603,180 @@ func (s *Simulator) buildRefloatAllDataResponse(mode uint8) []byte {
 	return resp
 }
 
-func (s *Simulator) buildRefloatRTTuneResponse() []byte {
-	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandRTTune)}
-	// RT tune values: kp, kp2, ki, mahony_kp, kp_brake, kp2_brake
-	resp = appendFloat32Auto(resp, 10.0)  // kp (Angle P)
-	resp = appendFloat32Auto(resp, 0.5)   // kp2 (Rate P)
-	resp = appendFloat32Auto(resp, 0.0)   // ki (Angle I)
-	resp = appendFloat32Auto(resp, 1.5)   // mahony_kp
-	resp = appendFloat32Auto(resp, 10.0)  // kp_brake
-	resp = appendFloat32Auto(resp, 0.5)   // kp2_brake
-	return resp
-}
-
-func (s *Simulator) buildRefloatTuneDefaultsResponse() []byte {
-	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandTuneDefaults)}
-	// Same format as RT tune but with defaults
-	resp = appendFloat32Auto(resp, 10.0)
-	resp = appendFloat32Auto(resp, 0.5)
-	resp = appendFloat32Auto(resp, 0.0)
-	resp = appendFloat32Auto(resp, 1.5)
-	resp = appendFloat32Auto(resp, 10.0)
-	resp = appendFloat32Auto(resp, 0.5)
-	return resp
-}
-
-func (s *Simulator) buildRefloatTuneOtherResponse() []byte {
-	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandTuneOther)}
-	// booster_angle, booster_ramp, booster_current
-	resp = appendFloat32Auto(resp, 8.0)
-	resp = appendFloat32Auto(resp, 1.0)
-	resp = appendFloat32Auto(resp, 10.0)
-	return resp
-}
-
-func (s *Simulator) buildRefloatTuneTiltResponse() []byte {
-	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandTuneTilt)}
-	// tilt related tune values
-	resp = appendFloat32Auto(resp, 0.0) // tilt_constant
-	resp = appendFloat32Auto(resp, 7.0) // tilt_speed
+func (s *Simulator) buildRefloatLightsControlResponse(data []byte) []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLightsControl)}
+	// Response: headlights_enabled << 1 | enabled
+	resp = append(resp, 0x03) // both enabled
 	return resp
 }
 
 func (s *Simulator) buildRefloatLCMPollResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMPoll)}
-	resp = append(resp, 0) // LCM status byte: 0 = no LCM connected
+	// state byte: bits 0-3 = state_compat, bits 4-5 = footpad_sensor_state, bit 7 = handtest
+	stateCompat := encodeStateCompat(s.state.RunState, s.state.StopCondition)
+	stateByte := stateCompat | (uint8(s.state.Footpad) << 4)
+	if s.state.Mode == refloat.ModeHandtest {
+		stateByte |= 0x80
+	}
+	resp = append(resp, stateByte)
+	resp = append(resp, byte(s.state.Fault))            // fault code
+	resp = append(resp, 0)                               // duty or pitch
+	resp = vesc.AppendFloat16(resp, s.state.ERPM, 1)     // erpm
+	resp = vesc.AppendFloat16(resp, s.state.BattCurrent, 1) // total current in
+	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10) // input voltage
+	resp = append(resp, 128)                              // brightness
+	resp = append(resp, 64)                               // brightness_idle
+	resp = append(resp, 128)                              // status_brightness
+	return resp
+}
+
+func (s *Simulator) buildRefloatLCMLightInfoResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMLightInfo)}
+	// LED type: 0 = no LCM
+	resp = append(resp, 0)
 	return resp
 }
 
 func (s *Simulator) buildRefloatLCMDeviceInfoResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMDeviceInfo)}
-	resp = append(resp, 0) // no LCM device
-	return resp
-}
-
-func (s *Simulator) buildRefloatChargingStateResponse() []byte {
-	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandChargingState)}
-	charging := uint8(0)
-	if s.state.Charging {
-		charging = 1
-	}
-	resp = append(resp, charging)
+	// Empty string (no LCM device)
+	resp = append(resp, 0)
 	return resp
 }
 
 func (s *Simulator) buildRefloatBatteryResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMGetBattery)}
-	// Battery percentage as uint8
-	battPct := uint8(85) // default 85%
-	resp = append(resp, battPct)
+	// Battery level as float32_auto (0.0-1.0)
+	resp = appendFloat32Auto(resp, 0.85)
 	return resp
 }
 
+// buildRefloatRealtimeDataResponse builds COMMAND_REALTIME_DATA (31) response.
+func (s *Simulator) buildRefloatRealtimeDataResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandRealtimeData)}
+
+	// mask: bit 0 = running, bit 1 = charging, bit 2 = alerts appended (always set)
+	mask := uint8(0x04) // alerts always appended
+	if s.state.RunState == refloat.StateRunning {
+		mask |= 0x01
+	}
+	if s.state.Charging {
+		mask |= 0x02
+	}
+	resp = append(resp, mask)
+
+	// extra_flags: bit 0=recording, bit 1=autostart, bit 2=autostop, bit 3=fatal_error
+	resp = append(resp, 0)
+
+	// time.now (uint32)
+	resp = vesc.AppendUint32(resp, 0)
+
+	// mode << 4 | state
+	resp = append(resp, uint8(s.state.Mode)<<4|uint8(s.state.RunState))
+
+	// footpad_state << 6 | charging << 5 | darkride << 1 | wheelslip
+	flagsByte := uint8(s.state.Footpad) << 6
+	if s.state.Charging {
+		flagsByte |= 0x20
+	}
+	resp = append(resp, flagsByte)
+
+	// sat << 4 | stop_condition
+	resp = append(resp, uint8(s.state.SAT)<<4|uint8(s.state.StopCondition))
+
+	// beep_reason
+	resp = append(resp, 0)
+
+	// 16 RT_DATA_ITEMS as float16_auto (float16 scale=1... actually these use
+	// buffer_append_float16, which is int16 scaled. Per Refloat source, scale varies.)
+	// The Refloat source uses float16_auto which is just AppendFloat16 with appropriate scales.
+	// Actually looking at the source more carefully, COMMAND_REALTIME_DATA uses a custom
+	// float16 encoding. For simplicity, use float16 with scale=10 for most values.
+	resp = vesc.AppendFloat16(resp, s.state.Speed, 10)        // motor.speed
+	resp = vesc.AppendFloat16(resp, s.state.ERPM, 1)          // motor.erpm
+	resp = vesc.AppendFloat16(resp, s.state.MotorCurrent, 10) // motor.current
+	resp = vesc.AppendFloat16(resp, s.state.MotorCurrent, 10) // motor.dir_current
+	resp = vesc.AppendFloat16(resp, s.state.MotorCurrent, 10) // motor.filt_current
+	resp = vesc.AppendFloat16(resp, s.state.DutyCycle, 1000)  // motor.duty_cycle
+	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)      // motor.batt_voltage
+	resp = vesc.AppendFloat16(resp, s.state.BattCurrent, 10)  // motor.batt_current
+	resp = vesc.AppendFloat16(resp, s.state.MOSFETTemp, 10)   // motor.mosfet_temp
+	resp = vesc.AppendFloat16(resp, s.state.MotorTemp, 10)    // motor.motor_temp
+	resp = vesc.AppendFloat16(resp, s.state.Pitch, 10)        // imu.pitch
+	resp = vesc.AppendFloat16(resp, s.state.Pitch, 10)        // imu.balance_pitch
+	resp = vesc.AppendFloat16(resp, s.state.Roll, 10)         // imu.roll
+	resp = vesc.AppendFloat16(resp, s.state.ADC1, 100)        // footpad.adc1
+	resp = vesc.AppendFloat16(resp, s.state.ADC2, 100)        // footpad.adc2
+	resp = vesc.AppendFloat16(resp, 0, 10)                    // remote.input
+
+	// If running, append 10 runtime items
+	if mask&0x01 != 0 {
+		resp = vesc.AppendFloat16(resp, s.state.Setpoint, 10)       // setpoint
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // atr.setpoint
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // brake_tilt.setpoint
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // torque_tilt.setpoint
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // turn_tilt.setpoint
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // remote.setpoint
+		resp = vesc.AppendFloat16(resp, s.state.BalanceCurrent, 10) // balance_current
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // atr.accel_diff
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // atr.speed_boost
+		resp = vesc.AppendFloat16(resp, 0, 10)                      // booster.current
+	}
+
+	// If charging, append charging data
+	if mask&0x02 != 0 {
+		resp = vesc.AppendFloat16(resp, 0, 10) // charging.current
+		resp = vesc.AppendFloat16(resp, 0, 10) // charging.voltage
+	}
+
+	// Always append alerts (mask bit 2)
+	resp = vesc.AppendUint32(resp, 0)                   // active_alert_mask
+	resp = vesc.AppendUint32(resp, 0)                   // reserved
+	resp = append(resp, byte(s.state.Fault))            // fw_fault_code
+
+	return resp
+}
+
+// buildRefloatRealtimeDataIDsResponse builds COMMAND_REALTIME_DATA_IDS (32) response.
+func (s *Simulator) buildRefloatRealtimeDataIDsResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandRealtimeDataIDs)}
+
+	// 16 RT_DATA_ITEMS
+	rtItems := []string{
+		"motor.speed", "motor.erpm", "motor.current", "motor.dir_current",
+		"motor.filt_current", "motor.duty_cycle", "motor.batt_voltage", "motor.batt_current",
+		"motor.mosfet_temp", "motor.motor_temp", "imu.pitch", "imu.balance_pitch",
+		"imu.roll", "footpad.adc1", "footpad.adc2", "remote.input",
+	}
+	resp = append(resp, uint8(len(rtItems)))
+	for _, name := range rtItems {
+		resp = append(resp, uint8(len(name)))
+		resp = append(resp, []byte(name)...)
+	}
+
+	// 10 RT_DATA_RUNTIME_ITEMS
+	runtimeItems := []string{
+		"setpoint", "atr.setpoint", "brake_tilt.setpoint", "torque_tilt.setpoint",
+		"turn_tilt.setpoint", "remote.setpoint", "balance_current",
+		"atr.accel_diff", "atr.speed_boost", "booster.current",
+	}
+	resp = append(resp, uint8(len(runtimeItems)))
+	for _, name := range runtimeItems {
+		resp = append(resp, uint8(len(name)))
+		resp = append(resp, []byte(name)...)
+	}
+
+	return resp
+}
+
+// buildRefloatAlertsResponse builds COMMAND_ALERTS_LIST (35) response.
 func (s *Simulator) buildRefloatAlertsResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandAlertsList)}
-	// Number of alerts (uint8) followed by alert data
-	resp = append(resp, 0) // no alerts
+	resp = vesc.AppendUint32(resp, 0)        // active_alert_mask
+	resp = vesc.AppendUint32(resp, 0)        // reserved
+	resp = append(resp, byte(s.state.Fault)) // fw_fault_code
+	// No fault name (fault code is 0)
+	resp = append(resp, 0) // alert_count = 0
 	return resp
 }
 
