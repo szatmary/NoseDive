@@ -98,21 +98,20 @@ func (c *configParams) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 // The binary format starts with a 4-byte SIGNATURE (CRC of XML content),
 // followed by each transmittable field serialized according to its type/vTx:
 //
-// Integer types (type=0, type=2) use vTx to determine wire size:
+// Integer types (type=0, type=2) use vTx (VESC_TX_T enum) for wire size:
 //
-//   - vTx=1: uint8 (1 byte)
-//   - vTx=2: int8 (1 byte)
-//   - vTx=3: uint16 (2 bytes)
-//   - vTx=4: int16 (2 bytes)
-//   - vTx=5: int32 (4 bytes)
-//   - vTx=6: uint32 (4 bytes)
-//   - vTx=7: float32_auto (4 bytes, IEEE754)
+//   - vTx=1 UINT8: 1 byte
+//   - vTx=2 INT8: 1 byte
+//   - vTx=3 UINT16: 2 bytes big-endian
+//   - vTx=4 INT16: 2 bytes big-endian
+//   - vTx=5 UINT32: 4 bytes big-endian
+//   - vTx=6 INT32: 4 bytes big-endian
 //
-// Double types (type=1) use vTx to determine encoding:
+// Double types (type=1) use vTx for encoding:
 //
-//   - vTx=7: float32_auto (4 bytes, IEEE754)
-//   - vTx=8: float16 scaled (2 bytes, int16(val*scale))
-//   - vTx=9: float32 scaled (4 bytes, int32(val*scale))
+//   - vTx=7 DOUBLE16: 2 bytes, int16(val * vTxDoubleScale)
+//   - vTx=8 DOUBLE32: 4 bytes, int32(val * vTxDoubleScale)
+//   - vTx=9 DOUBLE32_AUTO: 4 bytes, IEEE754 float32 (self-describing)
 //
 // Other types:
 //
@@ -146,32 +145,32 @@ func generateDefaultConfig(xmlData []byte) []byte {
 		switch p.Type {
 		case 0, 2: // int
 			switch vtx {
-			case 1: // uint8
+			case 1: // UINT8
 				buf = append(buf, uint8(parseInt32(p.ValInt)))
-			case 2: // int8
+			case 2: // INT8
 				buf = append(buf, uint8(int8(parseInt32(p.ValInt))))
-			case 3: // uint16
+			case 3: // UINT16
 				buf = vesc.AppendUint16(buf, uint16(parseInt32(p.ValInt)))
-			case 4: // int16
+			case 4: // INT16
 				buf = vesc.AppendInt16(buf, int16(parseInt32(p.ValInt)))
-			case 5: // int32
-				buf = vesc.AppendInt32(buf, parseInt32(p.ValInt))
-			case 6: // uint32
+			case 5: // UINT32
 				buf = vesc.AppendUint32(buf, uint32(parseInt32(p.ValInt)))
-			case 7: // float32_auto
-				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValInt))
+			case 6: // INT32
+				buf = vesc.AppendInt32(buf, parseInt32(p.ValInt))
 			default: // default: uint8
 				buf = append(buf, uint8(parseInt32(p.ValInt)))
 			}
 		case 1: // double
 			switch vtx {
-			case 8: // float16 scaled: int16(val * scale)
+			case 7: // DOUBLE16: int16(val * scale), 2 bytes
 				scale := parseFloat64(p.VTxDoubleScale)
 				buf = vesc.AppendInt16(buf, int16(parseFloat64(p.ValDouble)*scale))
-			case 9: // float32 scaled: int32(val * scale)
+			case 8: // DOUBLE32: int32(val * scale), 4 bytes
 				scale := parseFloat64(p.VTxDoubleScale)
 				buf = vesc.AppendInt32(buf, int32(parseFloat64(p.ValDouble)*scale))
-			default: // vTx=7 or unspecified: float32_auto (IEEE754)
+			case 9: // DOUBLE32_AUTO: IEEE754 float32, 4 bytes
+				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
+			default: // fallback: float32_auto
 				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
 			}
 		case 3: // string → skip
