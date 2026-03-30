@@ -8,7 +8,7 @@ struct NoseDiveApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(boardManager)
-                .preferredColorScheme(.dark)
+                .preferredColorScheme(.light)
         }
     }
 }

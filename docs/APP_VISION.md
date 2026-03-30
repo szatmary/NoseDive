@@ -454,17 +454,21 @@ User profile, board management, settings.
 ### Color Palette
 
 ```
-Background:     #0A0A0A (near-black)
-Surface:        #1A1A1A (card backgrounds)
-Surface Raised: #252525 (elevated cards)
-Primary:        #4ECDC4 (teal — speed, active states)
-Warning:        #FFB347 (amber — duty, caution)
-Danger:         #FF6B6B (coral — faults, limits)
-Success:        #7BC67E (green — connected, OK)
-Text Primary:   #FFFFFF
-Text Secondary: #888888
-Text Tertiary:  #555555
+Background:     #FCFCFC (clean white)
+Surface:        #FFFFFF (card backgrounds)
+Surface Raised: #F2F2F2 (elevated cards)
+Primary:        Hot Pink — Display P3 (1.0, 0.05, 0.4) — HDR on supported displays
+Warning:        Vivid Orange — Display P3 (1.0, 0.35, 0.0)
+Danger:         Vivid Red — Display P3 (1.0, 0.1, 0.1)
+Success:        Vivid Green — Display P3 (0.0, 0.75, 0.35)
+Text Primary:   #1A1A1A
+Text Secondary: #6E6E6E
+Text Tertiary:  #BBBBBB
 ```
+
+Colors use the Display P3 wide color gamut to push into HDR on
+ProMotion and XDR displays. On standard sRGB screens they gracefully
+fall back to the nearest representable value.
 
 ### Typography
 
@@ -478,7 +482,7 @@ Text Tertiary:  #555555
 
 Every piece of information lives on a card with:
 - 12px corner radius
-- Surface background (#1A1A1A)
+- Surface background (white)
 - 16px internal padding
 - Subtle shadow on raised cards
 - No borders — elevation implies separation
@@ -500,7 +504,7 @@ Custom illustrations for:
 - Error states (BLE disconnected, update failed)
 - Achievement moments (first ride, 100 miles, 1000 miles)
 
-Style: minimal line art, monochrome with teal accent. Not cartoonish. Think technical illustration meets Apple keynote aesthetic.
+Style: minimal line art, monochrome with hot pink accent. Not cartoonish. Think technical illustration meets Apple keynote aesthetic.
 
 ---
 

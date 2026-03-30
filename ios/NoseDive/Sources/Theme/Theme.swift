@@ -1,18 +1,26 @@
 import SwiftUI
 
 enum Theme {
-    static let background = Color(hex: 0x0A0A0A)
-    static let surface = Color(hex: 0x1A1A1A)
-    static let surfaceRaised = Color(hex: 0x252525)
-    static let primary = Color(hex: 0x4ECDC4)       // teal
-    static let warning = Color(hex: 0xFFB347)        // amber
-    static let danger = Color(hex: 0xFF6B6B)         // coral
-    static let success = Color(hex: 0x7BC67E)        // green
-    static let textPrimary = Color.white
-    static let textSecondary = Color(hex: 0x888888)
-    static let textTertiary = Color(hex: 0x555555)
+    // Core palette — white + hot pink, HDR-wide gamut where supported
+    static let background = Color(hex: 0xFCFCFC)
+    static let surface = Color.white
+    static let surfaceRaised = Color(hex: 0xF2F2F2)
 
-    static let cardRadius: CGFloat = 12
+    // Hot pink — use extended sRGB to push into HDR on supported displays
+    static let primary = Color(.displayP3, red: 1.0, green: 0.05, blue: 0.4, opacity: 1.0)
+    static let primarySoft = Color(.displayP3, red: 1.0, green: 0.05, blue: 0.4, opacity: 0.12)
+
+    // Vivid accent colors in P3 gamut
+    static let warning = Color(.displayP3, red: 1.0, green: 0.35, blue: 0.0, opacity: 1.0)
+    static let danger = Color(.displayP3, red: 1.0, green: 0.1, blue: 0.1, opacity: 1.0)
+    static let success = Color(.displayP3, red: 0.0, green: 0.75, blue: 0.35, opacity: 1.0)
+
+    // Text on white
+    static let textPrimary = Color(hex: 0x1A1A1A)
+    static let textSecondary = Color(hex: 0x6E6E6E)
+    static let textTertiary = Color(hex: 0xBBBBBB)
+
+    static let cardRadius: CGFloat = 16
     static let cardPadding: CGFloat = 16
 
     static func dutyColor(_ duty: Double) -> Color {

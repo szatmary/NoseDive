@@ -8,6 +8,7 @@ struct CardStyle: ViewModifier {
             .padding(Theme.cardPadding)
             .background(raised ? Theme.surfaceRaised : Theme.surface)
             .clipShape(RoundedRectangle(cornerRadius: Theme.cardRadius))
+            .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
     }
 }
 

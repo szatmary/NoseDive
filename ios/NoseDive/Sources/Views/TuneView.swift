@@ -76,7 +76,7 @@ struct TuneView: View {
                         .frame(width: 64, height: 64)
                         .background(
                             boardManager.activeProfile.id == profile.id
-                                ? Theme.primary.opacity(0.15) : Theme.surfaceRaised
+                                ? Theme.primarySoft : Theme.surfaceRaised
                         )
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     }
