@@ -18,7 +18,28 @@ func main() {
 	addr := flag.String("addr", "", "VESC TCP address (host:port)")
 	sim := flag.Bool("sim", false, "Start built-in simulator")
 	simAddr := flag.String("sim-addr", "127.0.0.1:0", "Simulator listen address")
+	simBLE := flag.Bool("sim-ble", false, "Enable BLE on simulator (emulate VESC Express)")
+	bleName := flag.String("ble-name", "VESC SIM", "BLE device name for simulator")
+	bleScan := flag.Bool("ble-scan", false, "Scan for VESC BLE devices")
+	bleAddr := flag.String("ble", "", "Connect to VESC via BLE address")
 	flag.Parse()
+
+	// BLE scan mode
+	if *bleScan {
+		fmt.Println("Scanning for VESC BLE devices (5 seconds)...")
+		devices, err := vesc.ScanBLE(5 * time.Second)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Scan error: %v\n", err)
+		}
+		if len(devices) == 0 {
+			fmt.Println("No VESC devices found.")
+		} else {
+			for i, d := range devices {
+				fmt.Printf("  [%d] %s (%s) RSSI: %d\n", i, d.Name, d.Address, d.RSSI)
+			}
+		}
+		os.Exit(0)
+	}
 
 	var conn *vesc.Connection
 	var simInstance *simulator.Simulator
@@ -33,10 +54,28 @@ func main() {
 		actualAddr := simInstance.Addr()
 		fmt.Printf("Simulator listening on %s\n", actualAddr)
 
+		// Optionally start BLE
+		if *simBLE {
+			if err := simInstance.StartBLE(*bleName); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to start BLE: %v\n", err)
+				fmt.Println("(continuing with TCP only)")
+			} else {
+				fmt.Printf("BLE advertising as %q\n", *bleName)
+			}
+		}
+
 		var err error
 		conn, err = vesc.DialTCP(actualAddr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to connect to simulator: %v\n", err)
+			os.Exit(1)
+		}
+	} else if *bleAddr != "" {
+		fmt.Printf("Connecting to VESC via BLE (%s)...\n", *bleAddr)
+		var err error
+		conn, err = vesc.DialBLE(*bleAddr)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to connect via BLE: %v\n", err)
 			os.Exit(1)
 		}
 	} else if *addr != "" {
@@ -50,8 +89,11 @@ func main() {
 		fmt.Println("NoseDive - VESC Refloat CLI")
 		fmt.Println()
 		fmt.Println("Usage:")
-		fmt.Println("  nosedive --sim              Start with built-in simulator")
-		fmt.Println("  nosedive --addr host:port   Connect to VESC over TCP")
+		fmt.Println("  nosedive --sim                   Start with built-in simulator (TCP)")
+		fmt.Println("  nosedive --sim --sim-ble          Start simulator with BLE (VESC Express)")
+		fmt.Println("  nosedive --addr host:port         Connect to VESC over TCP")
+		fmt.Println("  nosedive --ble-scan               Scan for VESC BLE devices")
+		fmt.Println("  nosedive --ble XX:XX:XX:XX:XX:XX  Connect to VESC via BLE")
 		fmt.Println()
 		flag.PrintDefaults()
 		os.Exit(0)

@@ -15,13 +15,14 @@ import (
 	"github.com/szatmary/nosedive/pkg/vesc"
 )
 
-// Simulator emulates a VESC running the Refloat package over TCP.
+// Simulator emulates a VESC running the Refloat package over TCP and/or BLE.
 type Simulator struct {
 	listener net.Listener
 	mu       sync.Mutex
 	state    *BoardState
 	running  bool
 	stop     chan struct{}
+	bleName  string // BLE device name (empty = no BLE)
 }
 
 // BoardState holds the simulated board state.
@@ -207,7 +208,7 @@ func (s *Simulator) handleConn(conn net.Conn) {
 			return
 		}
 
-		resp := s.handleCommand(payload)
+		resp := s.HandleCommand(payload)
 		if resp != nil {
 			pkt, err := vesc.EncodePacket(resp)
 			if err != nil {
@@ -222,7 +223,9 @@ func (s *Simulator) handleConn(conn net.Conn) {
 	}
 }
 
-func (s *Simulator) handleCommand(payload []byte) []byte {
+// HandleCommand processes a VESC command payload and returns the response.
+// This is transport-agnostic and used by both TCP and BLE transports.
+func (s *Simulator) HandleCommand(payload []byte) []byte {
 	if len(payload) == 0 {
 		return nil
 	}
