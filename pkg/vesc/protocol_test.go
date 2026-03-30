@@ -2,6 +2,7 @@ package vesc
 
 import (
 	"bytes"
+	"math"
 	"testing"
 )
 
@@ -88,5 +89,50 @@ func TestBufferHelpers(t *testing.T) {
 	}
 	if v := GetUint32(buf, &idx); v != 654321 {
 		t.Errorf("GetUint32 = %d, want 654321", v)
+	}
+}
+
+func TestFloat32Auto(t *testing.T) {
+	tests := []struct {
+		name string
+		val  float64
+	}{
+		{"zero", 0.0},
+		{"tiny", 0.00001},
+		{"one", 1.0},
+		{"negative", -3.14},
+		{"large", 10000.0},
+		{"small_frac", 0.001},
+		{"voltage", 63.5},
+		{"current", -25.7},
+		{"erpm", 50000.0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			buf := AppendFloat32Auto(nil, tt.val)
+			if len(buf) != 4 {
+				t.Fatalf("AppendFloat32Auto produced %d bytes, want 4", len(buf))
+			}
+
+			idx := 0
+			got := GetFloat32Auto(buf, &idx)
+			if idx != 4 {
+				t.Fatalf("GetFloat32Auto consumed %d bytes, want 4", idx)
+			}
+
+			if tt.val == 0 {
+				if got != 0 {
+					t.Errorf("round-trip(0) = %v, want 0", got)
+				}
+				return
+			}
+
+			// Allow small relative error due to int32 quantization
+			relErr := math.Abs(got-tt.val) / math.Abs(tt.val)
+			if relErr > 1e-6 {
+				t.Errorf("round-trip(%v) = %v, relative error %v", tt.val, got, relErr)
+			}
+		})
 	}
 }

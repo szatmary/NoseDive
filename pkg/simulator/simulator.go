@@ -110,7 +110,7 @@ func DefaultBoardState() *BoardState {
 		PkgMinor:     0,
 		PkgPatch:     1,
 		PkgSuffix:    "sim",
-		ConfigXML:    refloatConfigXML,
+		ConfigXML:    compressConfigXML(refloatConfigXML),
 		MCConf:       generateDefaultMCConf(),
 		AppConf:      generateDefaultAppConf(),
 	}
@@ -878,12 +878,9 @@ func (s *Simulator) updatePhysics() {
 	}
 }
 
-// Helper to encode float32_auto (IEEE 754 float32, big-endian).
+// appendFloat32Auto encodes using VESC's float32_auto format (5 bytes).
 func appendFloat32Auto(buf []byte, v float64) []byte {
-	bits := math.Float32bits(float32(v))
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, bits)
-	return append(buf, b...)
+	return vesc.AppendFloat32Auto(buf, v)
 }
 
 func encodeStateCompat(state refloat.RunState, stop refloat.StopCondition) uint8 {

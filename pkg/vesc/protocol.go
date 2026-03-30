@@ -171,11 +171,21 @@ func GetFloat32(buf []byte, scale float64, idx *int) float64 {
 	return float64(GetInt32(buf, idx)) / scale
 }
 
+// GetFloat32Auto decodes VESC's float32_auto format: IEEE754 float32, big-endian (4 bytes).
+// Despite the name "auto", this is equivalent to a standard IEEE754 float32.
 func GetFloat32Auto(buf []byte, idx *int) float64 {
-	// VESC float32_auto encoding: first 4 bytes contain IEEE754 float
 	bits := binary.BigEndian.Uint32(buf[*idx:])
 	*idx += 4
 	return float64(math.Float32frombits(bits))
+}
+
+// AppendFloat32Auto encodes a float using VESC's float32_auto format (4 bytes).
+// This is a standard IEEE754 float32, stored big-endian.
+func AppendFloat32Auto(buf []byte, v float64) []byte {
+	bits := math.Float32bits(float32(v))
+	b := make([]byte, 4)
+	binary.BigEndian.PutUint32(b, bits)
+	return append(buf, b...)
 }
 
 func GetString(buf []byte, idx *int) string {
