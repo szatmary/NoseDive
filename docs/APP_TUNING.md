@@ -145,101 +145,247 @@ The app ships with curated presets that serve as starting points. Users can't mo
 
 ---
 
-## Tuning UI
+## Tuning UI — Radar Chart
+
+### Why a Radar Chart
+
+Individual sliders hide the big picture. When you adjust "responsiveness" you can't see how it relates to "stability" — but those two things are deeply connected in how a board rides. A radar chart shows the **entire ride personality as a shape**. You see it, you drag it, you feel the result.
+
+Presets become recognizable silhouettes. "Chill" is a small, round shape. "Charge" is a large, spiky star. Your custom tune is whatever shape feels right to *you*. You can overlay profiles to compare them visually.
+
+### The 6 Axes
+
+Each axis of the radar represents a ride characteristic. Each axis maps to **multiple** underlying Refloat parameters — the rider never needs to know which ones.
+
+```
+                    Responsiveness
+                         ╱╲
+                        ╱  ╲
+                       ╱    ╲
+          Stability ──╱──────╲── Carving
+                     ╱ ╲    ╱ ╲
+                    ╱   ╲  ╱   ╲
+                   ╱     ╲╱     ╲
+          Safety ──────────────── Braking
+                         │
+                         │
+                     Agility
+```
+
+| Axis | What it Means | What it Controls |
+|------|--------------|-----------------|
+| **Responsiveness** | How quickly the board reacts to weight shifts | ATR strength, ATR speed boost, ATR response speed, ATR accel/decel limits |
+| **Stability** | How planted the board feels at speed | Mahony KP, Mahony KP roll, booster angle, booster ramp, booster current |
+| **Carving** | How much the board leans into turns | Turn tilt strength, turn tilt angle limit, turn tilt start angle |
+| **Braking** | How aggressively you can decelerate | Brake current, brake tilt strength, brake tilt angle limit |
+| **Safety** | How early and strongly the board warns you | Tiltback speed ERPM, tiltback duty, tiltback angle, tiltback ramp speed |
+| **Agility** | How nimble at low speed, how quick to engage/disengage | Startup pitch tolerance, startup speed, fault delays, footpad threshold |
 
 ### Main Tuning Screen
 
-The tuning screen is organized by **what the rider cares about**, not by Refloat parameter names. Each section has a plain-language description and a visual indicator.
-
 ```
 ┌─────────────────────────────────┐
-│  Active Profile: Daily Commute  │
-│  [Chill] [Flow] [Charge] [Trail]│ ← preset quick-switch
-├─────────────────────────────────┤
+│  My Tune              [Charge ▾]│ ← active profile picker
 │                                 │
-│  ◉ Responsiveness         ━━━━●│ ← simple slider
-│    How quickly the board reacts │
-│    to your movements            │
+│          Responsiveness          │
+│               ●                  │
+│              ╱ ╲                 │
+│             ╱   ╲                │
+│            ╱  ·  ╲               │
+│  Stability╱· · · ·╲Carving      │
+│           ╲· · · ·╱              │
+│            ╲  ·  ╱               │
+│             ╲   ╱                │
+│              ╲ ╱                 │
+│      Safety   ●   Braking       │
+│               │                  │
+│            Agility               │
 │                                 │
-│  ◉ Top Speed Warning      ━●━━━│
-│    When pushback kicks in       │
-│    ~28 mph                      │
+│  ┌─────────────────────────┐    │
+│  │ Responsiveness    ●━━━━ │ 7  │
+│  │ How quickly the board   │    │
+│  │ reacts to your shifts   │    │
+│  └─────────────────────────┘    │
 │                                 │
-│  ◉ Carving Feel           ━━●━━│
-│    How much the board leans     │
-│    into turns                   │
+│  [Apply]  [Save]  [Advanced ▸]  │
 │                                 │
-│  ◉ Braking Strength       ━━━●━│
-│    How aggressively you can     │
-│    slow down                    │
-│                                 │
-│  ◉ Stability at Speed     ━━●━━│
-│    Tighter = more planted,      │
-│    Looser = more nimble         │
-│                                 │
-│  [Advanced Settings ▸]         │
-│                                 │
-│  [Save to Board]               │
 └─────────────────────────────────┘
 ```
 
-### Simple Mode (Default)
+### Interaction Model
 
-Five primary sliders that each map to multiple underlying Refloat parameters:
+1. **Drag a vertex** on the radar chart → that axis value changes, shape updates in real-time
+2. The **detail card** below the chart shows the currently-selected axis with:
+   - Plain-language name and description
+   - Numeric value (1-10 scale)
+   - A one-line summary of the consequence: "Pushback starts at ~32 mph"
+3. Tap a different vertex or axis label → detail card switches to that axis
+4. **Pinch** the entire shape to scale all axes proportionally (make everything more/less)
+5. Shape updates are **live** — applied to the board immediately so the rider can feel it
+6. "Save" persists to flash. "Apply" writes without persisting (experiment mode).
 
-| Slider | Maps To | Range |
-|--------|---------|-------|
-| **Responsiveness** | ATR strength, ATR speed boost, balance filter | Low (mellow) → High (snappy) |
-| **Top Speed Warning** | Tiltback speed ERPM, tiltback duty, tiltback angle | Early (safe) → Late (expert) |
-| **Carving Feel** | Turn tilt strength, turn tilt angle limit | Minimal → Aggressive |
-| **Braking Strength** | Brake current, brake tilt strength, brake tilt angle limit | Gentle → Hard |
-| **Stability at Speed** | Mahony KP, Mahony KP roll, booster parameters | Loose (nimble) → Tight (planted) |
+### Preset Shapes
 
-Each slider position is interpolated between known-good value combinations. The mapping is non-linear — the middle positions are the sweet spot for most riders, and extremes require intent.
-
-### Advanced Mode
-
-Tapping "Advanced Settings" expands each category to show the individual Refloat parameters:
+Each preset has a distinctive silhouette:
 
 ```
-▼ Responsiveness
+Chill                Flow                 Charge               Trail
+  ·                    ·                    ●                    ·
+ ╱ ╲                  ╱ ╲                  ╱ ╲                  ╱ ╲
+·   ·                ●   ●                ●   ●                ·   ●
+ ╲ ╱                  ╲ ╱                  ╲ ╱                  ╲ ╱
+  ·                    ·                    ●                    ·
+  ·                    ·                    ·                    ●
+
+Small, round         Balanced pentagon    Large, aggressive    Tall on agility
+Low everything       Medium everything    High everything      + stability
+                                          except safety
+```
+
+When you select a preset, the radar shape **animates** from your current tune to the preset shape. This makes it viscerally clear what's changing.
+
+### Overlay Comparison
+
+Long-press a preset button to overlay its shape on top of your current tune:
+
+```
+         Responsiveness
+              ●╌╌╌╌○          ● = your tune (solid, teal)
+             ╱╲   ╱╲          ○ = preset overlay (dashed, gray)
+            ╱  ╲ ╱  ╲
+  Stability●  ╌○╌╌╌╌○Carving
+            ╲  ╱ ╲  ╱
+             ╲╱   ╲╱
+     Safety   ●╌╌╌╌○  Braking
+              │
+           Agility
+```
+
+This lets riders see: "Charge has way more responsiveness and braking than my tune, but less safety margin." They can then drag individual vertices toward the preset shape without adopting it wholesale.
+
+### Detail Card Behavior
+
+Tapping an axis shows a detail card with context-aware information:
+
+**Safety axis selected:**
+```
+┌─────────────────────────────────┐
+│ Safety                    ●━━━━ │ 4/10
+│                                 │
+│ When the board pushes back to   │
+│ warn you about speed limits.    │
+│                                 │
+│ Pushback starts at ~32 mph      │
+│ Duty limit: 85%                 │
+│ Pushback angle: 6°              │
+│                                 │
+│ ⚠ Lower values mean less        │
+│   warning before the motor's    │
+│   physical limits.              │
+└─────────────────────────────────┘
+```
+
+**Responsiveness axis selected:**
+```
+┌─────────────────────────────────┐
+│ Responsiveness            ━━●━━ │ 7/10
+│                                 │
+│ How quickly the board reacts    │
+│ to your weight shifts.          │
+│                                 │
+│ ATR: strong                     │
+│ Speed boost: moderate           │
+│                                 │
+│ Higher = snappier reactions,    │
+│ but can feel twitchy if you're  │
+│ not used to it.                 │
+└─────────────────────────────────┘
+```
+
+### Axis Value Scale
+
+Each axis uses a 1-10 integer scale. This is what the rider sees and thinks in. Internally, each integer maps to a curated set of Refloat parameter values.
+
+| Axis | 1 (min) | 5 (mid) | 10 (max) |
+|------|---------|---------|----------|
+| **Responsiveness** | ATR 0.3, boost 0 | ATR 1.0, boost 0.5 | ATR 2.5, boost 2.0 |
+| **Stability** | KP 0.4, boost 0A | KP 1.5, boost 5A | KP 3.0, boost 15A |
+| **Carving** | Tilt 1.0, limit 4° | Tilt 5.0, limit 8° | Tilt 12.0, limit 15° |
+| **Braking** | 6A, tilt 2.0 | 15A, tilt 5.0 | 30A, tilt 10.0 |
+| **Safety** | ERPM 30000, 10° tilt | ERPM 22000, 7° tilt | ERPM 15000, 4° tilt |
+| **Agility** | 20° tol, 300ms delay | 15° tol, 150ms delay | 8° tol, 50ms delay |
+
+Note: Safety is **inverted** — higher values mean *more* safety (earlier warnings), lower values mean less safety (later warnings, closer to limits). This is deliberate: dragging the safety vertex outward should make the board *safer*, not less safe.
+
+The mapping between scale values is interpolated along a curated curve. Values between integers are valid — the slider is continuous, the 1-10 labels are just reference points.
+
+### Startup & Disengage (Separate Section)
+
+Startup and disengage settings affect safety in ways that don't fit neatly on the radar. These get their own small section below the chart:
+
+```
+┌─────────────────────────────────┐
+│ Startup & Disengage             │
+│                                 │
+│ Footpad sensitivity   ━━━●━━━━━ │
+│ How firmly you need to press    │
+│                                 │
+│ Disengage speed       ━━━━●━━━━ │
+│ How quickly the board stops     │
+│ when you lift a foot            │
+│                                 │
+│ These affect safety. Change     │
+│ carefully and test at low speed.│
+└─────────────────────────────────┘
+```
+
+---
+
+## Advanced Mode
+
+Tapping "Advanced" opens the full parameter editor, organized by radar axis. Each parameter shows which axis it belongs to and its current value.
+
+```
+▼ Responsiveness (axis value: 7)
   ATR Strength          [  1.2  ] ← direct numeric input
   ATR Speed Boost       [  0.8  ]
   ATR Response Speed    [  1.0  ]
   ATR Accel Limit       [ 10.0  ]
   ATR Decel Limit       [ 10.0  ]
 
-▼ Top Speed Warning
-  Tiltback Speed (ERPM) [ 25000 ]
-  Tiltback Duty         [  0.85 ]
-  Tiltback Angle        [  8.0° ]
-  Tiltback Ramp Speed   [  3.0  ]
-
-▼ Carving
-  Turn Tilt Strength    [  5.0  ]
-  Turn Tilt Angle Limit [  8.0° ]
-  Turn Tilt Start Angle [  2.0° ]
-
-▼ Braking
-  Brake Current         [ 15.0A ]
-  Brake Tilt Strength   [  5.0  ]
-  Brake Tilt Angle Limit[ 10.0° ]
-
-▼ Stability
+▼ Stability (axis value: 5)
   Mahony KP             [  1.5  ]
   Mahony KP Roll        [  0.3  ]
   Booster Angle         [ 10.0  ]
   Booster Ramp          [  5.0  ]
   Booster Current       [ 10.0A ]
 
-▼ Startup & Disengage
-  Footpad Threshold     [  1.5V ]
+▼ Carving (axis value: 6)
+  Turn Tilt Strength    [  5.0  ]
+  Turn Tilt Angle Limit [  8.0° ]
+  Turn Tilt Start Angle [  2.0° ]
+
+▼ Braking (axis value: 6)
+  Brake Current         [ 15.0A ]
+  Brake Tilt Strength   [  5.0  ]
+  Brake Tilt Angle Limit[ 10.0° ]
+
+▼ Safety (axis value: 4)
+  Tiltback Speed (ERPM) [ 25000 ]  (~32 mph)
+  Tiltback Duty         [  0.85 ]
+  Tiltback Angle        [  8.0° ]
+  Tiltback Ramp Speed   [  3.0  ]
+
+▼ Agility (axis value: 5)
   Startup Pitch Tol.    [ 15.0° ]
   Startup Speed         [  0.5  ]
   Fault Delay Pitch     [ 250ms ]
   Fault Delay Half SW   [ 100ms ]
   Fault Delay Full SW   [ 250ms ]
+  Footpad Threshold     [  1.5V ]
 ```
+
+When individual parameters are edited in advanced mode, the radar chart axis value updates to reflect the change (it may become a non-integer). A dot appears on the radar to indicate "custom — not on the standard curve." This makes it clear when the rider has gone off-script.
 
 Each parameter shows:
 - Current value (editable)
@@ -247,15 +393,18 @@ Each parameter shows:
 - Min/max safe range
 - Brief tooltip explaining what it does
 
-### Live Preview
+---
 
-When the board is connected, certain changes can be previewed in real-time:
+## Live Preview
 
-- **ATR changes**: apply immediately via `COMM_SET_CUSTOM_CONFIG` (95) — rider can feel the difference on the next push
+When the board is connected, changes are applied in real-time:
+
+- **Radar vertex drag**: immediately writes all affected parameters via `COMM_SET_CUSTOM_CONFIG` (95)
+- **ATR changes**: rider can feel the difference on the next push
 - **Tiltback changes**: take effect on next ride engage
 - **Startup changes**: feel on next footpad step-on
 
-Changes are applied live but **not persisted** until the user taps "Save to Board" (`COMMAND_CFG_SAVE` (4)). This lets riders experiment without committing.
+Changes are applied live but **not persisted** until the user taps "Save to Board" (`COMMAND_CFG_SAVE` (4)). This lets riders experiment without committing. If the board reboots or disconnects, it reverts to the last saved config.
 
 ---
 
