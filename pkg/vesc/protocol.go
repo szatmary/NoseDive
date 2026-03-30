@@ -204,7 +204,7 @@ func ParseValues(data []byte) (*Values, error) {
 	idx += 4 // skip id
 	idx += 4 // skip iq
 	v.DutyCycle = GetFloat16(data, 1000, &idx)
-	v.RPM = float64(GetInt32(data, &idx))
+	v.RPM = GetFloat32(data, 1, &idx)
 	v.Voltage = GetFloat16(data, 10, &idx)
 	v.AmpHours = GetFloat32(data, 10000, &idx)
 	v.AmpHoursCharged = GetFloat32(data, 10000, &idx)

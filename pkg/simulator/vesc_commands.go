@@ -70,7 +70,7 @@ func (s *Simulator) buildGetValuesResponse() []byte {
 	resp = vesc.AppendFloat32(resp, 0, 100)                     // avg_id
 	resp = vesc.AppendFloat32(resp, 0, 100)                     // avg_iq
 	resp = vesc.AppendFloat16(resp, s.state.DutyCycle, 1000)    // duty_cycle
-	resp = vesc.AppendInt32(resp, int32(s.state.ERPM))          // rpm
+	resp = vesc.AppendFloat32(resp, s.state.ERPM, 1)           // rpm (float32, scale=1)
 	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)        // input_voltage
 	resp = vesc.AppendFloat32(resp, s.state.AmpHours, 10000)    // amp_hours
 	resp = vesc.AppendFloat32(resp, s.state.AmpHoursCharged, 10000)
@@ -92,28 +92,32 @@ func (s *Simulator) buildGetValuesResponse() []byte {
 }
 
 // buildGetValuesSetupResponse builds COMM_GET_VALUES_SETUP response.
-// This is an aggregated view used by VESC Tool for multi-VESC setups.
+// Format from datatypes.h / commands.c for multi-VESC aggregated view.
 func (s *Simulator) buildGetValuesSetupResponse() []byte {
 	resp := []byte{byte(vesc.CommGetValuesSetup)}
 
-	resp = vesc.AppendFloat16(resp, s.state.MOSFETTemp, 10)    // temp_mos
-	resp = vesc.AppendFloat16(resp, s.state.MotorTemp, 10)      // temp_motor
-	resp = vesc.AppendFloat32(resp, s.state.MotorCurrent, 100)  // current_motor
-	resp = vesc.AppendFloat32(resp, s.state.BattCurrent, 100)   // current_in
-	resp = vesc.AppendFloat16(resp, s.state.DutyCycle, 1000)    // duty
-	resp = vesc.AppendFloat32(resp, s.state.ERPM, 1)            // rpm
-	resp = vesc.AppendFloat32(resp, s.state.Speed, 10000)       // speed (m/s)
-	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)        // v_in
-	resp = vesc.AppendFloat32(resp, 0, 10000)                   // battery_wh
-	resp = vesc.AppendFloat32(resp, s.state.MotorCurrent, 100)  // current_in_setup (total)
-	resp = vesc.AppendFloat32(resp, s.state.MotorCurrent, 100)  // current_motor_setup
-	resp = append(resp, byte(s.state.Fault))                    // fault
-	resp = append(resp, 0)                                      // pid_pos
-	resp = append(resp, s.state.ControllerID)                   // controller_id
-	resp = append(resp, 1)                                      // num_vescs
-	resp = vesc.AppendFloat32(resp, s.state.WattHours, 10000)   // wh_charge_total
-	resp = vesc.AppendFloat32(resp, 0, 10000)                   // current_in_total
-	resp = append(resp, 0)                                      // status (timeout_killsw)
+	resp = vesc.AppendFloat16(resp, s.state.MOSFETTemp, 10)        // temp_mos
+	resp = vesc.AppendFloat16(resp, s.state.MotorTemp, 10)          // temp_motor
+	resp = vesc.AppendFloat32(resp, s.state.MotorCurrent, 100)      // current_tot
+	resp = vesc.AppendFloat32(resp, s.state.BattCurrent, 100)       // current_in_tot
+	resp = vesc.AppendFloat16(resp, s.state.DutyCycle, 1000)        // duty_cycle
+	resp = vesc.AppendFloat32(resp, s.state.ERPM, 1)                // rpm
+	resp = vesc.AppendFloat32(resp, s.state.Speed, 1000)            // speed (m/s, scale=1e3)
+	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)            // input_voltage
+	resp = vesc.AppendFloat16(resp, 0.85, 1000)                     // battery_level (0-1)
+	resp = vesc.AppendFloat32(resp, s.state.AmpHours, 10000)        // ah_tot
+	resp = vesc.AppendFloat32(resp, s.state.AmpHoursCharged, 10000) // ah_charge_tot
+	resp = vesc.AppendFloat32(resp, s.state.WattHours, 10000)       // wh_tot
+	resp = vesc.AppendFloat32(resp, s.state.WattHoursCharged, 10000) // wh_charge_tot
+	resp = vesc.AppendFloat32(resp, 0, 1000)                        // distance
+	resp = vesc.AppendFloat32(resp, 0, 1000)                        // distance_abs
+	resp = vesc.AppendFloat32(resp, 0, 1000000)                     // pid_pos_now
+	resp = append(resp, byte(s.state.Fault))                         // fault_code
+	resp = append(resp, s.state.ControllerID)                        // controller_id
+	resp = append(resp, 1)                                           // num_vescs
+	resp = vesc.AppendFloat32(resp, 0, 1000)                         // wh_batt_left
+	resp = vesc.AppendUint32(resp, 0)                                // odometer
+	resp = vesc.AppendUint32(resp, 0)                                // uptime_ms
 
 	return resp
 }
