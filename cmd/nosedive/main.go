@@ -19,6 +19,8 @@ func main() {
 	sim := flag.Bool("sim", false, "Start built-in simulator")
 	simAddr := flag.String("sim-addr", "127.0.0.1:0", "Simulator listen address")
 	simBLE := flag.Bool("sim-ble", false, "Enable BLE on simulator (emulate VESC Express)")
+	simWeb := flag.Bool("web", false, "Enable web GUI for simulator")
+	webAddr := flag.String("web-addr", "127.0.0.1:8080", "Web GUI listen address")
 	bleName := flag.String("ble-name", "VESC SIM", "BLE device name for simulator")
 	bleScan := flag.Bool("ble-scan", false, "Scan for VESC BLE devices")
 	bleAddr := flag.String("ble", "", "Connect to VESC via BLE address")
@@ -64,6 +66,16 @@ func main() {
 			}
 		}
 
+		// Optionally start web GUI
+		if *simWeb {
+			if err := simInstance.StartWeb(*webAddr); err != nil {
+				fmt.Fprintf(os.Stderr, "Failed to start web GUI: %v\n", err)
+				fmt.Println("(continuing without web GUI)")
+			} else {
+				fmt.Printf("Web GUI at http://%s\n", simInstance.WebAddr())
+			}
+		}
+
 		var err error
 		conn, err = vesc.DialTCP(actualAddr)
 		if err != nil {
@@ -89,11 +101,13 @@ func main() {
 		fmt.Println("NoseDive - VESC Refloat CLI")
 		fmt.Println()
 		fmt.Println("Usage:")
-		fmt.Println("  nosedive --sim                   Start with built-in simulator (TCP)")
-		fmt.Println("  nosedive --sim --sim-ble          Start simulator with BLE (VESC Express)")
-		fmt.Println("  nosedive --addr host:port         Connect to VESC over TCP")
-		fmt.Println("  nosedive --ble-scan               Scan for VESC BLE devices")
-		fmt.Println("  nosedive --ble XX:XX:XX:XX:XX:XX  Connect to VESC via BLE")
+		fmt.Println("  nosedive --sim                    Start with built-in simulator (TCP)")
+		fmt.Println("  nosedive --sim --sim-ble           Start simulator with BLE (VESC Express)")
+		fmt.Println("  nosedive --sim --web               Start simulator with web GUI")
+		fmt.Println("  nosedive --sim --sim-ble --web     Full simulator (BLE + web GUI)")
+		fmt.Println("  nosedive --addr host:port          Connect to VESC over TCP")
+		fmt.Println("  nosedive --ble-scan                Scan for VESC BLE devices")
+		fmt.Println("  nosedive --ble XX:XX:XX:XX:XX:XX   Connect to VESC via BLE")
 		fmt.Println()
 		flag.PrintDefaults()
 		os.Exit(0)

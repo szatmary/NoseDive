@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NoseDive Simulator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>NoseDive Simulator</h1>
+  <span id="connStatus" class="status disconnected">Disconnected</span>
+</header>
+
+<main>
+  <!-- Board Status -->
+  <section class="panel">
+    <h2>Board Status</h2>
+    <div class="status-row">
+      <div class="badge-group">
+        <label>State</label>
+        <span id="dispRunState" class="badge ready">READY</span>
+      </div>
+      <div class="badge-group">
+        <label>Mode</label>
+        <span id="dispMode" class="badge">NORMAL</span>
+      </div>
+      <div class="badge-group">
+        <label>SAT</label>
+        <span id="dispSAT" class="badge dim">NONE</span>
+      </div>
+      <div class="badge-group">
+        <label>Stop</label>
+        <span id="dispStop" class="badge dim">NONE</span>
+      </div>
+    </div>
+    <div class="status-row metrics">
+      <div class="metric">
+        <span class="metric-val" id="dispSpeed">0.0</span>
+        <span class="metric-unit">km/h</span>
+      </div>
+      <div class="metric">
+        <span class="metric-val" id="dispERPM">0</span>
+        <span class="metric-unit">ERPM</span>
+      </div>
+      <div class="metric">
+        <span class="metric-val" id="dispDuty">0.0</span>
+        <span class="metric-unit">% duty</span>
+      </div>
+      <div class="metric">
+        <span class="metric-val" id="dispMotorCurrent">0.0</span>
+        <span class="metric-unit">A motor</span>
+      </div>
+      <div class="metric">
+        <span class="metric-val" id="dispBattCurrent">0.0</span>
+        <span class="metric-unit">A batt</span>
+      </div>
+      <div class="metric">
+        <span class="metric-val" id="dispSetpoint">0.0</span>
+        <span class="metric-unit">setpoint</span>
+      </div>
+    </div>
+  </section>
+
+  <div class="columns">
+    <!-- Left Column: Motion & Sensors -->
+    <div class="col">
+      <!-- Motion Controls -->
+      <section class="panel">
+        <h2>Motion</h2>
+        <div class="control">
+          <label>Pitch</label>
+          <input type="range" id="pitch" min="-20" max="20" step="0.1" value="0">
+          <span class="val" id="pitchVal">0.0&deg;</span>
+        </div>
+        <div class="control">
+          <label>Roll</label>
+          <input type="range" id="roll" min="-70" max="70" step="0.1" value="0">
+          <span class="val" id="rollVal">0.0&deg;</span>
+        </div>
+      </section>
+
+      <!-- Footpad -->
+      <section class="panel">
+        <h2>Footpad</h2>
+        <div class="footpad-buttons">
+          <button class="fp-btn active" data-fp="NONE">None</button>
+          <button class="fp-btn" data-fp="LEFT">Left</button>
+          <button class="fp-btn" data-fp="RIGHT">Right</button>
+          <button class="fp-btn" data-fp="BOTH">Both</button>
+        </div>
+        <div class="adc-display">
+          <span>ADC1: <span id="dispADC1">0.00</span></span>
+          <span>ADC2: <span id="dispADC2">0.00</span></span>
+        </div>
+      </section>
+
+      <!-- State Overrides -->
+      <section class="panel">
+        <h2>State Overrides</h2>
+        <div class="control">
+          <label>Run State</label>
+          <select id="runState">
+            <option value="DISABLED">Disabled</option>
+            <option value="STARTUP">Startup</option>
+            <option value="READY" selected>Ready</option>
+            <option value="RUNNING">Running</option>
+          </select>
+        </div>
+        <div class="control">
+          <label>Mode</label>
+          <select id="mode">
+            <option value="NORMAL" selected>Normal</option>
+            <option value="HANDTEST">Handtest</option>
+            <option value="FLYWHEEL">Flywheel</option>
+          </select>
+        </div>
+        <div class="control">
+          <label>Fault</label>
+          <select id="fault">
+            <option value="NONE" selected>None</option>
+            <option value="OVER_VOLTAGE">Over Voltage</option>
+            <option value="UNDER_VOLTAGE">Under Voltage</option>
+            <option value="DRV">DRV</option>
+            <option value="ABS_OVER_CURRENT">Abs Over Current</option>
+            <option value="OVER_TEMP_FET">Over Temp FET</option>
+            <option value="OVER_TEMP_MOTOR">Over Temp Motor</option>
+          </select>
+        </div>
+        <div class="control">
+          <label>Charging</label>
+          <label class="switch">
+            <input type="checkbox" id="charging">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </section>
+    </div>
+
+    <!-- Right Column: Electrical & Thermal -->
+    <div class="col">
+      <!-- Electrical -->
+      <section class="panel">
+        <h2>Electrical</h2>
+        <div class="control">
+          <label>Voltage</label>
+          <input type="range" id="voltage" min="30" max="84" step="0.1" value="63.0">
+          <span class="val" id="voltageVal">63.0 V</span>
+        </div>
+        <div class="readonly-row">
+          <span>Ah: <span id="dispAH">0.000</span></span>
+          <span>Wh: <span id="dispWH">0.000</span></span>
+        </div>
+      </section>
+
+      <!-- Thermal -->
+      <section class="panel">
+        <h2>Thermal</h2>
+        <div class="control">
+          <label>MOSFET Temp</label>
+          <input type="range" id="mosfetTemp" min="15" max="120" step="0.5" value="28">
+          <span class="val" id="mosfetTempVal">28.0 &deg;C</span>
+        </div>
+        <div class="control">
+          <label>Motor Temp</label>
+          <input type="range" id="motorTemp" min="15" max="120" step="0.5" value="25">
+          <span class="val" id="motorTempVal">25.0 &deg;C</span>
+        </div>
+      </section>
+
+      <!-- Board Visualization -->
+      <section class="panel">
+        <h2>Orientation</h2>
+        <div class="board-viz">
+          <div id="boardSide" class="board-side">
+            <div class="board-body"></div>
+            <div class="wheel"></div>
+          </div>
+          <div id="boardTop" class="board-top">
+            <div class="board-deck">
+              <div class="pad pad-left" id="padLeft"></div>
+              <div class="hub"></div>
+              <div class="pad pad-right" id="padRight"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

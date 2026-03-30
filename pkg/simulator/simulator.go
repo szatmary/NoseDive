@@ -23,6 +23,7 @@ type Simulator struct {
 	running  bool
 	stop     chan struct{}
 	bleName  string // BLE device name (empty = no BLE)
+	webAddr  string // Web GUI address
 }
 
 // BoardState holds the simulated board state.
