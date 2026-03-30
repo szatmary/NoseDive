@@ -394,3 +394,81 @@ func (s *Simulator) buildQMLUIResponse(cmd vesc.CommPacketID, payload []byte) []
 	resp = vesc.AppendInt32(resp, 0) // offset = 0
 	return resp
 }
+
+// Motor detection responses.
+// These simulate the detection process, returning values from the board profile
+// or defaults. In real hardware, VESC spins the motor to measure these.
+
+// buildDetectMotorRLResponse returns resistance and inductance.
+// Response: [cmd][R*1e6 as int32][L*1e3 as int32][LdLq_diff*1e3 as int32]
+func (s *Simulator) buildDetectMotorRLResponse() []byte {
+	log.Printf("simulator: motor R/L detection (simulated)")
+	resp := []byte{byte(vesc.CommDetectMotorRL)}
+	resp = vesc.AppendFloat32(resp, s.state.MotorResistance, 1e6)
+	resp = vesc.AppendFloat32(resp, s.state.MotorInductance, 1e3)
+	resp = vesc.AppendFloat32(resp, 0, 1e3) // Ld-Lq difference
+	return resp
+}
+
+// buildDetectMotorFluxResponse returns flux linkage.
+// Response: [cmd][flux_linkage*1e7 as int32]
+func (s *Simulator) buildDetectMotorFluxResponse() []byte {
+	log.Printf("simulator: motor flux linkage detection (simulated)")
+	resp := []byte{byte(vesc.CommDetectMotorFlux)}
+	resp = vesc.AppendFloat32(resp, s.state.MotorFluxLinkage, 1e7)
+	return resp
+}
+
+// buildDetectEncoderResponse returns encoder offset and ratio.
+// Response: [cmd][offset*1e6 as int32][ratio*1e6 as int32][inverted as int8]
+func (s *Simulator) buildDetectEncoderResponse() []byte {
+	log.Printf("simulator: encoder detection (simulated - no encoder)")
+	resp := []byte{byte(vesc.CommDetectEncoder)}
+	resp = vesc.AppendFloat32(resp, 1001.0, 1e6) // 1001.0 = no encoder sentinel
+	resp = vesc.AppendFloat32(resp, 0, 1e6)       // ratio = 0
+	resp = append(resp, 0)                         // not inverted
+	return resp
+}
+
+// buildDetectHallFOCResponse returns the hall sensor table.
+// Response: [cmd][hall_table x8][result]
+func (s *Simulator) buildDetectHallFOCResponse() []byte {
+	log.Printf("simulator: Hall sensor FOC detection (simulated)")
+	resp := []byte{byte(vesc.CommDetectHallFOC)}
+	resp = append(resp, s.state.HallSensorTable[:]...)
+	resp = append(resp, 0) // 0 = success
+	return resp
+}
+
+// buildDetectMotorParamResponse returns legacy motor parameters.
+// Response: [cmd][cycle_int_limit*1e3][bemf_coupling_k*1e3][hall_table x8][hall_res]
+func (s *Simulator) buildDetectMotorParamResponse(payload []byte) []byte {
+	log.Printf("simulator: legacy motor param detection (simulated)")
+	resp := []byte{byte(vesc.CommDetectMotorParam)}
+	resp = vesc.AppendFloat32(resp, 62.0, 1e3)  // cycle_int_limit
+	resp = vesc.AppendFloat32(resp, 600.0, 1e3)  // bemf_coupling_k
+	resp = append(resp, s.state.HallSensorTable[:]...)
+	resp = append(resp, 0) // hall_res = 0 (success)
+	return resp
+}
+
+// buildDetectMotorFluxOpenloopResponse returns flux linkage via openloop method.
+// Response: [cmd][flux*1e7][enc_offset*1e6][enc_ratio*1e6][enc_inverted]
+func (s *Simulator) buildDetectMotorFluxOpenloopResponse() []byte {
+	log.Printf("simulator: openloop flux linkage detection (simulated)")
+	resp := []byte{byte(vesc.CommDetectMotorFluxOpenloop)}
+	resp = vesc.AppendFloat32(resp, s.state.MotorFluxLinkage, 1e7)
+	resp = vesc.AppendFloat32(resp, 1001.0, 1e6) // no encoder
+	resp = vesc.AppendFloat32(resp, 0, 1e6)       // ratio = 0
+	resp = append(resp, 0)                         // not inverted
+	return resp
+}
+
+// buildDetectApplyAllFOCResponse simulates the all-in-one FOC detection.
+// Response: [cmd][result as int16] (0 = success)
+func (s *Simulator) buildDetectApplyAllFOCResponse() []byte {
+	log.Printf("simulator: apply all FOC detection (simulated)")
+	resp := []byte{byte(vesc.CommDetectApplyAllFOC)}
+	resp = vesc.AppendInt16(resp, 0) // success
+	return resp
+}

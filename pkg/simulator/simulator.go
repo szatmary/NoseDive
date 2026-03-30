@@ -83,6 +83,13 @@ type BoardState struct {
 	PkgPatch  uint8
 	PkgSuffix string
 
+	// Motor detection results (populated from profile or defaults)
+	MotorResistance float64 // ohms
+	MotorInductance float64 // henries
+	MotorFluxLinkage float64 // weber
+	HallSensorTable [8]uint8
+	MotorPolePairs  int
+
 	// Config data
 	ConfigXML  []byte // Refloat custom config XML
 	ConfigData []byte // Serialized Refloat custom config binary
@@ -113,9 +120,14 @@ func DefaultBoardState() *BoardState {
 		PkgMinor:     0,
 		PkgPatch:     1,
 		PkgSuffix:    "sim",
-		ConfigXML:    compressConfigXML(refloatConfigXML),
-		MCConf:       generateDefaultMCConf(),
-		AppConf:      generateDefaultAppConf(),
+		MotorResistance:  0.030,                                              // 30 mOhm typical hub motor
+		MotorInductance:  0.000020,                                            // 20 uH
+		MotorFluxLinkage: 0.0070,                                              // 7.0 mWb
+		HallSensorTable:  [8]uint8{255, 1, 3, 2, 5, 6, 4, 255},               // typical hall table
+		MotorPolePairs:   15,                                                  // common for onewheel motors
+		ConfigXML:        compressConfigXML(refloatConfigXML),
+		MCConf:           generateDefaultMCConf(),
+		AppConf:          generateDefaultAppConf(),
 	}
 
 	// Generate default binary config from XML
@@ -144,6 +156,17 @@ func NewWithProfile(p *board.Profile) *Simulator {
 	bs.FWMinor = p.Controller.Firmware.Minor
 	bs.HWName = p.Controller.Hardware
 	bs.Voltage = p.Battery.VoltageMax // Start fully charged
+
+	// Motor detection values from profile
+	bs.MotorResistance = p.Motor.Resistance
+	bs.MotorInductance = p.Motor.Inductance
+	bs.MotorFluxLinkage = p.Motor.FluxLinkage
+	bs.MotorPolePairs = p.Motor.PolePairs
+	if len(p.Motor.HallSensorTable) == 8 {
+		for i, v := range p.Motor.HallSensorTable {
+			bs.HallSensorTable[i] = uint8(v)
+		}
+	}
 
 	s := &Simulator{
 		state:   bs,
@@ -360,6 +383,20 @@ func (s *Simulator) HandleCommand(payload []byte) []byte {
 		return nil // accept silently
 	case vesc.CommGetMCConfTemp:
 		return []byte{byte(vesc.CommGetMCConfTemp)}
+	case vesc.CommDetectMotorParam:
+		return s.buildDetectMotorParamResponse(payload)
+	case vesc.CommDetectMotorRL:
+		return s.buildDetectMotorRLResponse()
+	case vesc.CommDetectMotorFlux:
+		return s.buildDetectMotorFluxResponse()
+	case vesc.CommDetectEncoder:
+		return s.buildDetectEncoderResponse()
+	case vesc.CommDetectHallFOC:
+		return s.buildDetectHallFOCResponse()
+	case vesc.CommDetectMotorFluxOpenloop:
+		return s.buildDetectMotorFluxOpenloopResponse()
+	case vesc.CommDetectApplyAllFOC:
+		return s.buildDetectApplyAllFOCResponse()
 	case vesc.CommReboot, vesc.CommShutdown:
 		log.Printf("simulator: received command 0x%02x (ignored)", cmd)
 		return nil

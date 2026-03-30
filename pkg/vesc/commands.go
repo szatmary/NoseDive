@@ -46,6 +46,8 @@ const (
 	CommSetMCConfTemp                CommPacketID = 48
 	CommSetMCConfTempSetup           CommPacketID = 49
 	CommGetValuesSelective           CommPacketID = 50
+	CommDetectMotorFluxOpenloop      CommPacketID = 57
+	CommDetectApplyAllFOC            CommPacketID = 58
 	CommGetValuesSetupSelective      CommPacketID = 51
 	CommPingCAN                      CommPacketID = 62
 	CommAppDisableOutput             CommPacketID = 63
