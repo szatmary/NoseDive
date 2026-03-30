@@ -12,7 +12,7 @@ const (
 	startByteLong  byte = 0x03 // Payload length >= 256 bytes
 	endByte        byte = 0x03
 
-	maxPayloadSize = 512
+	maxPayloadSize = 8192 // Large enough for config chunks and QML data
 )
 
 // EncodePacket frames a VESC payload into a wire-format packet.

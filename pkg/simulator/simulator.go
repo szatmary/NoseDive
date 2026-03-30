@@ -28,12 +28,13 @@ type Simulator struct {
 // BoardState holds the simulated board state.
 type BoardState struct {
 	// VESC
-	FWMajor  uint8
-	FWMinor  uint8
-	HWName   string
-	UUID     [12]byte
-	Voltage  float64
-	Fault    vesc.FaultCode
+	FWMajor      uint8
+	FWMinor      uint8
+	HWName       string
+	UUID         [12]byte
+	ControllerID uint8
+	Voltage      float64
+	Fault        vesc.FaultCode
 
 	// Motor
 	ERPM         float64
@@ -61,48 +62,66 @@ type BoardState struct {
 	ADC2 float64
 
 	// Setpoints
-	Setpoint     float64
+	Setpoint       float64
 	BalanceCurrent float64
 
 	// Counters
-	AmpHours        float64
-	AmpHoursCharged float64
-	WattHours       float64
+	AmpHours         float64
+	AmpHoursCharged  float64
+	WattHours        float64
 	WattHoursCharged float64
-	Tachometer      int32
-	TachometerAbs   int32
+	Tachometer       int32
+	TachometerAbs    int32
 
 	// Refloat package info
-	PkgName    string
-	PkgMajor   uint8
-	PkgMinor   uint8
-	PkgPatch   uint8
-	PkgSuffix  string
+	PkgName   string
+	PkgMajor  uint8
+	PkgMinor  uint8
+	PkgPatch  uint8
+	PkgSuffix string
+
+	// Config data
+	ConfigXML  []byte // Refloat custom config XML
+	ConfigData []byte // Serialized Refloat custom config binary
+	MCConf     []byte // Motor controller config blob
+	AppConf    []byte // App config blob
 }
 
 // DefaultBoardState returns a realistic idle board state.
 func DefaultBoardState() *BoardState {
-	return &BoardState{
-		FWMajor:    6,
-		FWMinor:    5,
-		HWName:     "VESC 6 MK6",
-		Voltage:    63.0, // ~15S fully charged
-		MOSFETTemp: 28.0,
-		MotorTemp:  25.0,
-		RunState:   refloat.StateReady,
-		Mode:       refloat.ModeNormal,
+	bs := &BoardState{
+		FWMajor:      6,
+		FWMinor:      5,
+		HWName:       "VESC 6 MK6",
+		ControllerID: 0,
+		Voltage:      63.0, // ~15S fully charged
+		MOSFETTemp:   28.0,
+		MotorTemp:    25.0,
+		RunState:     refloat.StateReady,
+		Mode:         refloat.ModeNormal,
 		StopCondition: refloat.StopNone,
-		Footpad:    refloat.FootpadNone,
-		Pitch:      0.0,
-		Roll:       0.0,
-		ADC1:       0.0,
-		ADC2:       0.0,
-		PkgName:    "Refloat",
-		PkgMajor:   2,
-		PkgMinor:   0,
-		PkgPatch:   1,
-		PkgSuffix:  "sim",
+		Footpad:      refloat.FootpadNone,
+		Pitch:        0.0,
+		Roll:         0.0,
+		ADC1:         0.0,
+		ADC2:         0.0,
+		PkgName:      "Refloat",
+		PkgMajor:     2,
+		PkgMinor:     0,
+		PkgPatch:     1,
+		PkgSuffix:    "sim",
+		ConfigXML:    refloatConfigXML,
+		MCConf:       generateDefaultMCConf(),
+		AppConf:      generateDefaultAppConf(),
 	}
+
+	// Generate default binary config from XML
+	bs.ConfigData = generateDefaultConfig(refloatConfigXML)
+
+	// Generate a fake UUID
+	copy(bs.UUID[:], []byte{0x4e, 0x6f, 0x73, 0x65, 0x44, 0x69, 0x76, 0x65, 0x53, 0x49, 0x4d, 0x31})
+
+	return bs
 }
 
 // New creates a new simulator.
@@ -239,15 +258,112 @@ func (s *Simulator) HandleCommand(payload []byte) []byte {
 		return s.buildFWVersionResponse()
 	case vesc.CommGetValues:
 		return s.buildGetValuesResponse()
+	case vesc.CommGetValuesSetup:
+		return s.buildGetValuesSetupResponse()
+	case vesc.CommGetValuesSelective, vesc.CommGetValuesSetupSelective:
+		// Return full values for selective requests
+		return s.buildGetValuesResponse()
 	case vesc.CommAlive:
 		return nil // no response needed
+	case vesc.CommSetDuty, vesc.CommSetCurrent, vesc.CommSetCurrentBrake,
+		vesc.CommSetRPM, vesc.CommSetPos, vesc.CommSetHandbrake,
+		vesc.CommSetCurrentRel:
+		return nil // motor control commands - no response
+	case vesc.CommGetMCConf, vesc.CommGetMCConfDefault:
+		return s.buildGetMCConfResponse()
+	case vesc.CommSetMCConf:
+		// Accept and store MC config
+		if len(payload) > 1 {
+			s.state.MCConf = make([]byte, len(payload)-1)
+			copy(s.state.MCConf, payload[1:])
+		}
+		return nil
+	case vesc.CommGetAppConf, vesc.CommGetAppConfDefault:
+		return s.buildGetAppConfResponse()
+	case vesc.CommSetAppConf:
+		if len(payload) > 1 {
+			s.state.AppConf = make([]byte, len(payload)-1)
+			copy(s.state.AppConf, payload[1:])
+		}
+		return nil
+	case vesc.CommGetDecodedPPM:
+		return s.buildGetDecodedPPMResponse()
+	case vesc.CommGetDecodedADC:
+		return s.buildGetDecodedADCResponse()
+	case vesc.CommGetDecodedChuk:
+		return s.buildGetDecodedChukResponse()
+	case vesc.CommGetDecodedBalance:
+		// Return empty balance data
+		resp := []byte{byte(vesc.CommGetDecodedBalance)}
+		resp = vesc.AppendFloat32(resp, s.state.Pitch, 1000000)
+		resp = vesc.AppendFloat32(resp, s.state.Roll, 1000000)
+		resp = vesc.AppendFloat32(resp, 0, 1000000) // diff time
+		resp = vesc.AppendFloat32(resp, s.state.MotorCurrent, 1000000)
+		return resp
+	case vesc.CommPingCAN:
+		return s.buildPingCANResponse()
+	case vesc.CommForwardCAN:
+		// CAN forwarding - extract the inner command and handle it
+		if len(payload) > 2 {
+			return s.HandleCommand(payload[2:])
+		}
+		return nil
+	case vesc.CommTerminalCmd, vesc.CommTerminalCmdSync:
+		return s.buildTerminalResponse(payload)
+	case vesc.CommGetIMUData:
+		return s.buildGetIMUDataResponse(payload)
+	case vesc.CommGetCustomConfigXML:
+		return s.buildGetCustomConfigXMLResponse(payload)
+	case vesc.CommGetCustomConfig, vesc.CommGetCustomConfigDefault:
+		return s.buildGetCustomConfigResponse(payload)
+	case vesc.CommSetCustomConfig:
+		return s.buildSetCustomConfigResponse(payload)
+	case vesc.CommGetBatteryCut:
+		return s.buildGetBatteryCutResponse()
+	case vesc.CommSetBatteryCut:
+		return nil // accept silently
+	case vesc.CommGetStats:
+		return s.buildGetStatsResponse(payload)
+	case vesc.CommResetStats:
+		return nil // accept silently
+	case vesc.CommGetQMLUIHW:
+		return s.buildQMLUIResponse(vesc.CommGetQMLUIHW, payload)
+	case vesc.CommGetQMLUIApp:
+		return s.buildQMLUIResponse(vesc.CommGetQMLUIApp, payload)
+	case vesc.CommSetMCConfTemp, vesc.CommSetMCConfTempSetup:
+		return nil // accept silently
+	case vesc.CommGetMCConfTemp:
+		return []byte{byte(vesc.CommGetMCConfTemp)}
+	case vesc.CommReboot, vesc.CommShutdown:
+		log.Printf("simulator: received command 0x%02x (ignored)", cmd)
+		return nil
+	case vesc.CommAppDisableOutput:
+		return nil // accept silently
+	case vesc.CommSetOdometer:
+		return nil
+	case vesc.CommBMSGetValues:
+		// Return minimal BMS response
+		return []byte{byte(vesc.CommBMSGetValues)}
+	case vesc.CommSetChuckData:
+		return nil
+	case vesc.CommFWInfo:
+		return s.buildFWVersionResponse() // same format
 	case vesc.CommCustomAppData:
 		if len(payload) < 2 {
 			return nil
 		}
 		return s.handleCustomAppData(payload[1:])
+	case vesc.CommSetBLEName, vesc.CommSetBLEPin, vesc.CommSetCANMode:
+		return nil // accept silently
+	case vesc.CommGetIMUCalibration:
+		resp := []byte{byte(vesc.CommGetIMUCalibration)}
+		// accel offsets (3 x float32) + gyro offsets (3 x float32)
+		for i := 0; i < 6; i++ {
+			resp = vesc.AppendFloat32(resp, 0, 1000)
+		}
+		return resp
 	default:
-		log.Printf("simulator: unhandled command 0x%02x", cmd)
+		log.Printf("simulator: unhandled command 0x%02x (%d)", cmd, cmd)
 		return nil
 	}
 }
@@ -269,44 +385,74 @@ func (s *Simulator) handleCustomAppData(data []byte) []byte {
 			mode = data[2]
 		}
 		return s.buildRefloatAllDataResponse(mode)
+	case refloat.CommandRTTune:
+		return s.buildRefloatRTTuneResponse()
+	case refloat.CommandTuneDefaults:
+		return s.buildRefloatTuneDefaultsResponse()
+	case refloat.CommandTuneOther:
+		return s.buildRefloatTuneOtherResponse()
+	case refloat.CommandTuneTilt:
+		return s.buildRefloatTuneTiltResponse()
+	case refloat.CommandCfgSave:
+		log.Printf("simulator: refloat config save requested")
+		return nil // accept silently
+	case refloat.CommandCfgRestore:
+		log.Printf("simulator: refloat config restore requested")
+		return nil
+	case refloat.CommandRCMove:
+		// Remote control move command - accept silently
+		return nil
+	case refloat.CommandBooster:
+		return nil // accept
+	case refloat.CommandPrintInfo:
+		return s.buildRefloatInfoResponse()
+	case refloat.CommandExperiment:
+		return nil
+	case refloat.CommandLock:
+		return nil // accept lock/unlock
+	case refloat.CommandHandtest:
+		// Toggle handtest mode
+		if s.state.Mode == refloat.ModeHandtest {
+			s.state.Mode = refloat.ModeNormal
+		} else {
+			s.state.Mode = refloat.ModeHandtest
+		}
+		return nil
+	case refloat.CommandFlywheel:
+		if s.state.Mode == refloat.ModeFlywheel {
+			s.state.Mode = refloat.ModeNormal
+		} else {
+			s.state.Mode = refloat.ModeFlywheel
+		}
+		return nil
+	case refloat.CommandLightsControl:
+		return nil // accept
+	case refloat.CommandLCMPoll:
+		return s.buildRefloatLCMPollResponse()
+	case refloat.CommandLCMLightInfo:
+		return nil
+	case refloat.CommandLCMLightCtrl:
+		return nil
+	case refloat.CommandLCMDeviceInfo:
+		return s.buildRefloatLCMDeviceInfoResponse()
+	case refloat.CommandChargingState:
+		return s.buildRefloatChargingStateResponse()
+	case refloat.CommandLCMGetBattery:
+		return s.buildRefloatBatteryResponse()
+	case refloat.CommandRealtimeData:
+		return s.buildRefloatRTDataResponse()
+	case refloat.CommandRealtimeDataIDs:
+		return s.buildRefloatRTDataResponse()
+	case refloat.CommandAlertsList:
+		return s.buildRefloatAlertsResponse()
+	case refloat.CommandAlertsControl:
+		return nil // accept
+	case refloat.CommandDataRecordReq:
+		return nil // no data recording in sim
 	default:
 		log.Printf("simulator: unhandled refloat command %d", cmd)
 		return nil
 	}
-}
-
-func (s *Simulator) buildFWVersionResponse() []byte {
-	resp := []byte{byte(vesc.CommFWVersion), s.state.FWMajor, s.state.FWMinor}
-	// Append HW name as null-terminated string
-	resp = append(resp, []byte(s.state.HWName)...)
-	resp = append(resp, 0)
-	// Append UUID
-	resp = append(resp, s.state.UUID[:]...)
-	return resp
-}
-
-func (s *Simulator) buildGetValuesResponse() []byte {
-	resp := []byte{byte(vesc.CommGetValues)}
-
-	// Build response matching ParseValues expectations
-	resp = vesc.AppendFloat16(resp, s.state.MOSFETTemp, 10)  // temp_mos
-	resp = vesc.AppendFloat16(resp, s.state.MotorTemp, 10)    // temp_motor
-	resp = vesc.AppendFloat32(resp, s.state.MotorCurrent, 100) // avg_motor_current
-	resp = vesc.AppendFloat32(resp, s.state.BattCurrent, 100)  // avg_input_current
-	resp = vesc.AppendFloat32(resp, 0, 100)                    // id
-	resp = vesc.AppendFloat32(resp, 0, 100)                    // iq
-	resp = vesc.AppendFloat16(resp, s.state.DutyCycle, 1000)   // duty
-	resp = vesc.AppendInt32(resp, int32(s.state.ERPM))         // rpm
-	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)       // voltage
-	resp = vesc.AppendFloat32(resp, s.state.AmpHours, 10000)
-	resp = vesc.AppendFloat32(resp, s.state.AmpHoursCharged, 10000)
-	resp = vesc.AppendFloat32(resp, s.state.WattHours, 10000)
-	resp = vesc.AppendFloat32(resp, s.state.WattHoursCharged, 10000)
-	resp = vesc.AppendInt32(resp, s.state.Tachometer)
-	resp = vesc.AppendInt32(resp, s.state.TachometerAbs)
-	resp = append(resp, byte(s.state.Fault))
-
-	return resp
 }
 
 func (s *Simulator) buildRefloatInfoResponse() []byte {
@@ -453,6 +599,84 @@ func (s *Simulator) buildRefloatAllDataResponse(mode uint8) []byte {
 		resp = append(resp, clampUint8(0.85*200)) // battery level 85%
 	}
 
+	return resp
+}
+
+func (s *Simulator) buildRefloatRTTuneResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandRTTune)}
+	// RT tune values: kp, kp2, ki, mahony_kp, kp_brake, kp2_brake
+	resp = appendFloat32Auto(resp, 10.0)  // kp (Angle P)
+	resp = appendFloat32Auto(resp, 0.5)   // kp2 (Rate P)
+	resp = appendFloat32Auto(resp, 0.0)   // ki (Angle I)
+	resp = appendFloat32Auto(resp, 1.5)   // mahony_kp
+	resp = appendFloat32Auto(resp, 10.0)  // kp_brake
+	resp = appendFloat32Auto(resp, 0.5)   // kp2_brake
+	return resp
+}
+
+func (s *Simulator) buildRefloatTuneDefaultsResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandTuneDefaults)}
+	// Same format as RT tune but with defaults
+	resp = appendFloat32Auto(resp, 10.0)
+	resp = appendFloat32Auto(resp, 0.5)
+	resp = appendFloat32Auto(resp, 0.0)
+	resp = appendFloat32Auto(resp, 1.5)
+	resp = appendFloat32Auto(resp, 10.0)
+	resp = appendFloat32Auto(resp, 0.5)
+	return resp
+}
+
+func (s *Simulator) buildRefloatTuneOtherResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandTuneOther)}
+	// booster_angle, booster_ramp, booster_current
+	resp = appendFloat32Auto(resp, 8.0)
+	resp = appendFloat32Auto(resp, 1.0)
+	resp = appendFloat32Auto(resp, 10.0)
+	return resp
+}
+
+func (s *Simulator) buildRefloatTuneTiltResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandTuneTilt)}
+	// tilt related tune values
+	resp = appendFloat32Auto(resp, 0.0) // tilt_constant
+	resp = appendFloat32Auto(resp, 7.0) // tilt_speed
+	return resp
+}
+
+func (s *Simulator) buildRefloatLCMPollResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMPoll)}
+	resp = append(resp, 0) // LCM status byte: 0 = no LCM connected
+	return resp
+}
+
+func (s *Simulator) buildRefloatLCMDeviceInfoResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMDeviceInfo)}
+	resp = append(resp, 0) // no LCM device
+	return resp
+}
+
+func (s *Simulator) buildRefloatChargingStateResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandChargingState)}
+	charging := uint8(0)
+	if s.state.Charging {
+		charging = 1
+	}
+	resp = append(resp, charging)
+	return resp
+}
+
+func (s *Simulator) buildRefloatBatteryResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMGetBattery)}
+	// Battery percentage as uint8
+	battPct := uint8(85) // default 85%
+	resp = append(resp, battPct)
+	return resp
+}
+
+func (s *Simulator) buildRefloatAlertsResponse() []byte {
+	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandAlertsList)}
+	// Number of alerts (uint8) followed by alert data
+	resp = append(resp, 0) // no alerts
 	return resp
 }
 
