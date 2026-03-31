@@ -18,14 +18,15 @@ import (
 
 // Simulator emulates a VESC running the Refloat package over TCP and/or BLE.
 type Simulator struct {
-	listener net.Listener
-	mu       sync.Mutex
-	state    *BoardState
-	profile  *board.Profile // Optional board profile
-	running  bool
-	stop     chan struct{}
-	bleName  string // BLE device name (empty = no BLE)
-	webAddr  string // Web GUI address
+	listener   net.Listener
+	mu         sync.Mutex
+	state      *BoardState
+	profile    *board.Profile // Optional board profile
+	canDevices []CANDevice    // Devices on the simulated CAN bus
+	running    bool
+	stop       chan struct{}
+	bleName    string // BLE device name (empty = no BLE)
+	webAddr    string // Web GUI address
 }
 
 // BoardState holds the simulated board state.
@@ -140,11 +141,18 @@ func DefaultBoardState() *BoardState {
 }
 
 // New creates a new simulator with default board state.
+// Includes a VESC Express on the CAN bus by default.
 func New() *Simulator {
 	return &Simulator{
-		state: DefaultBoardState(),
-		stop:  make(chan struct{}),
+		state:      DefaultBoardState(),
+		canDevices: defaultCANBus(),
+		stop:       make(chan struct{}),
 	}
+}
+
+// defaultCANBus returns the standard CAN bus devices: VESC Express + BMS.
+func defaultCANBus() []CANDevice {
+	return []CANDevice{DefaultVESCExpress(), DefaultVESCBMS()}
 }
 
 // NewWithProfile creates a simulator initialized from a board profile.
@@ -169,9 +177,10 @@ func NewWithProfile(p *board.Profile) *Simulator {
 	}
 
 	s := &Simulator{
-		state:   bs,
-		profile: p,
-		stop:    make(chan struct{}),
+		state:      bs,
+		profile:    p,
+		canDevices: defaultCANBus(),
+		stop:       make(chan struct{}),
 	}
 	return s
 }
@@ -297,10 +306,14 @@ func (s *Simulator) HandleCommand(payload []byte) []byte {
 	if len(payload) == 0 {
 		return nil
 	}
-
-	cmd := vesc.CommPacketID(payload[0])
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.handleCommandLocked(payload)
+}
+
+// handleCommandLocked does the actual dispatch. Caller must hold s.mu.
+func (s *Simulator) handleCommandLocked(payload []byte) []byte {
+	cmd := vesc.CommPacketID(payload[0])
 
 	switch cmd {
 	case vesc.CommFWVersion:
@@ -352,10 +365,23 @@ func (s *Simulator) HandleCommand(payload []byte) []byte {
 	case vesc.CommPingCAN:
 		return s.buildPingCANResponse()
 	case vesc.CommForwardCAN:
-		// CAN forwarding - extract the inner command and handle it
-		if len(payload) > 2 {
-			return s.HandleCommand(payload[2:])
+		// CAN forwarding: [0x22][target_id][inner_command...]
+		if len(payload) < 3 {
+			return nil
 		}
+		targetID := payload[1]
+		innerPayload := payload[2:]
+		// Route to self if target matches our controller ID
+		if targetID == s.state.ControllerID {
+			return s.handleCommandLocked(innerPayload)
+		}
+		// Route to CAN device with matching ID
+		for _, dev := range s.canDevices {
+			if dev.ID() == targetID {
+				return dev.HandleCommand(innerPayload)
+			}
+		}
+		log.Printf("simulator: CAN forward to unknown device %d", targetID)
 		return nil
 	case vesc.CommTerminalCmd, vesc.CommTerminalCmdSync:
 		return s.buildTerminalResponse(payload)

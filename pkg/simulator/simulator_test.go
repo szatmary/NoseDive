@@ -95,3 +95,110 @@ func TestSimulatorEndToEnd(t *testing.T) {
 		t.Errorf("Stop condition = %s, want SWITCH_FULL", rt.State.StopCondition)
 	}
 }
+
+func TestCANBusPing(t *testing.T) {
+	sim := New()
+	if err := sim.Start("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Stop()
+
+	// PING_CAN should return controller ID 0 (main VESC) + 253 (Express) + 10 (BMS)
+	resp := sim.HandleCommand([]byte{byte(vesc.CommPingCAN)})
+	if resp == nil {
+		t.Fatal("PingCAN returned nil")
+	}
+	if len(resp) != 4 {
+		t.Fatalf("PingCAN response length = %d, want 4 (cmd + 3 devices)", len(resp))
+	}
+	if resp[0] != byte(vesc.CommPingCAN) {
+		t.Errorf("PingCAN cmd = 0x%02x, want 0x%02x", resp[0], byte(vesc.CommPingCAN))
+	}
+	if resp[1] != 0 {
+		t.Errorf("PingCAN main ID = %d, want 0", resp[1])
+	}
+	if resp[2] != 253 {
+		t.Errorf("PingCAN express ID = %d, want 253", resp[2])
+	}
+	if resp[3] != 10 {
+		t.Errorf("PingCAN BMS ID = %d, want 10", resp[3])
+	}
+}
+
+func TestCANForwardToExpress(t *testing.T) {
+	sim := New()
+	if err := sim.Start("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Stop()
+
+	// Forward FW_VERSION to controller 253 (VESC Express)
+	payload := []byte{byte(vesc.CommForwardCAN), 253, byte(vesc.CommFWVersion)}
+	resp := sim.HandleCommand(payload)
+	if resp == nil {
+		t.Fatal("ForwardCAN to Express returned nil")
+	}
+	if resp[0] != byte(vesc.CommFWVersion) {
+		t.Fatalf("response cmd = 0x%02x, want CommFWVersion", resp[0])
+	}
+	// Check HW type byte — should be VESCExpress (3)
+	// Format: [cmd][major][minor][hw_name\0][uuid:12][paired:1][test:1][hw_type:1]...
+	// Find hw_type: skip cmd(1) + major(1) + minor(1) + hwname + null + uuid(12) + paired(1) + test(1)
+	idx := 3
+	for idx < len(resp) && resp[idx] != 0 {
+		idx++
+	}
+	idx++ // skip null terminator
+	idx += 12 // uuid
+	idx += 1  // isPaired
+	idx += 1  // fw test version
+	if idx >= len(resp) {
+		t.Fatal("response too short to contain hw_type")
+	}
+	hwType := vesc.HWType(resp[idx])
+	if hwType != vesc.HWTypeVESCExpress {
+		t.Errorf("HW type = %d, want %d (VESCExpress)", hwType, vesc.HWTypeVESCExpress)
+	}
+}
+
+func TestCANForwardToSelf(t *testing.T) {
+	sim := New()
+	if err := sim.Start("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Stop()
+
+	// Forward FW_VERSION to controller 0 (self)
+	payload := []byte{byte(vesc.CommForwardCAN), 0, byte(vesc.CommFWVersion)}
+	resp := sim.HandleCommand(payload)
+	if resp == nil {
+		t.Fatal("ForwardCAN to self returned nil")
+	}
+	// HW type should be HWTypeVESC (0) — the main motor controller
+	idx := 3
+	for idx < len(resp) && resp[idx] != 0 {
+		idx++
+	}
+	idx++ // null
+	idx += 12 // uuid
+	idx += 1  // isPaired
+	idx += 1  // fw test version
+	if idx >= len(resp) {
+		t.Fatal("response too short")
+	}
+	hwType := vesc.HWType(resp[idx])
+	if hwType != vesc.HWTypeVESC {
+		t.Errorf("HW type = %d, want %d (VESC)", hwType, vesc.HWTypeVESC)
+	}
+}
+
+func TestCANForwardUnknownDevice(t *testing.T) {
+	sim := New()
+
+	// Forward to non-existent controller 99
+	payload := []byte{byte(vesc.CommForwardCAN), 99, byte(vesc.CommFWVersion)}
+	resp := sim.HandleCommand(payload)
+	if resp != nil {
+		t.Errorf("ForwardCAN to unknown device should return nil, got %d bytes", len(resp))
+	}
+}

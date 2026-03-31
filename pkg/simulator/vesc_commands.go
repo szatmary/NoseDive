@@ -123,9 +123,13 @@ func (s *Simulator) buildGetValuesSetupResponse() []byte {
 }
 
 // buildPingCANResponse builds COMM_PING_CAN response.
-// Returns our own controller ID to indicate we're on the bus.
+// Returns all device IDs on the CAN bus: ourselves plus every CAN device.
 func (s *Simulator) buildPingCANResponse() []byte {
-	return []byte{byte(vesc.CommPingCAN), s.state.ControllerID}
+	resp := []byte{byte(vesc.CommPingCAN), s.state.ControllerID}
+	for _, dev := range s.canDevices {
+		resp = append(resp, dev.ID())
+	}
+	return resp
 }
 
 // buildGetIMUDataResponse builds COMM_GET_IMU_DATA response.
