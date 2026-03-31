@@ -103,8 +103,14 @@ enum VESCPacket {
         case getValuesSetup = 47
         case pingCAN = 62
         case getIMUData = 65
+        case bmsGetValues = 96
         case getBatteryCut = 115
         case getStats = 128
+    }
+
+    enum HWType: UInt8 {
+        case vesc = 0
+        case vescExpress = 3
     }
 
     // MARK: - Buffer helpers (big-endian)
@@ -162,5 +168,127 @@ enum VESCPacket {
     static func parsePingCAN(_ payload: Data) -> [UInt8] {
         guard payload.count >= 2, payload[payload.startIndex] == CommPacketID.pingCAN.rawValue else { return [] }
         return Array(payload.dropFirst())
+    }
+
+    // MARK: - FW Version
+
+    struct FWVersionInfo {
+        var major: UInt8 = 0
+        var minor: UInt8 = 0
+        var hwName: String = ""
+        var uuid: String = ""
+        var hwType: HWType = .vesc
+        var customConfigCount: UInt8 = 0
+        var packageName: String = ""
+        var isPaired: Bool = false
+    }
+
+    static func parseFWVersion(_ payload: Data) -> FWVersionInfo? {
+        guard payload.count > 3, payload[payload.startIndex] == CommPacketID.fwVersion.rawValue else { return nil }
+        var info = FWVersionInfo()
+        info.major = payload[payload.startIndex + 1]
+        info.minor = payload[payload.startIndex + 2]
+
+        var idx = payload.startIndex + 3
+
+        // HW name (null-terminated)
+        var hwChars: [UInt8] = []
+        while idx < payload.endIndex && payload[idx] != 0 { hwChars.append(payload[idx]); idx += 1 }
+        info.hwName = String(bytes: hwChars, encoding: .utf8) ?? ""
+        idx += 1 // skip null
+
+        // UUID (12 bytes)
+        if idx + 12 <= payload.endIndex {
+            info.uuid = payload[idx..<idx+12].map { String(format: "%02x", $0) }.joined()
+            idx += 12
+        }
+
+        // isPaired (1 byte)
+        if idx < payload.endIndex { info.isPaired = payload[idx] != 0; idx += 1 }
+        // FW test version (1 byte)
+        if idx < payload.endIndex { idx += 1 }
+        // HW type (1 byte)
+        if idx < payload.endIndex { info.hwType = HWType(rawValue: payload[idx]) ?? .vesc; idx += 1 }
+        // Custom config count (1 byte)
+        if idx < payload.endIndex { info.customConfigCount = payload[idx]; idx += 1 }
+        // Has phase filters (1 byte)
+        if idx < payload.endIndex { idx += 1 }
+        // QML HW (1 byte)
+        if idx < payload.endIndex { idx += 1 }
+        // QML App (1 byte)
+        if idx < payload.endIndex { idx += 1 }
+        // NRF flags (1 byte)
+        if idx < payload.endIndex { idx += 1 }
+        // FW/package name (null-terminated)
+        var nameChars: [UInt8] = []
+        while idx < payload.endIndex && payload[idx] != 0 { nameChars.append(payload[idx]); idx += 1 }
+        info.packageName = String(bytes: nameChars, encoding: .utf8) ?? ""
+
+        return info
+    }
+
+    // MARK: - CAN Forward
+
+    /// Build a COMM_FORWARD_CAN payload wrapping an inner command for a specific controller.
+    static func buildCANForward(targetID: UInt8, innerPayload: Data) -> Data {
+        var payload = Data([CommPacketID.forwardCAN.rawValue, targetID])
+        payload.append(innerPayload)
+        return payload
+    }
+
+    /// Build a COMM_FW_VERSION request for a specific CAN device.
+    static func buildFWVersionRequestForCAN(targetID: UInt8) -> Data {
+        return buildCANForward(targetID: targetID, innerPayload: Data([CommPacketID.fwVersion.rawValue]))
+    }
+
+    // MARK: - Refloat custom app
+
+    static let refloatMagic: UInt8 = 0x65
+
+    /// Build a Refloat info request (COMM_CUSTOM_APP_DATA + magic + CommandInfo).
+    static func buildRefloatInfoRequest() -> Data {
+        return Data([CommPacketID.customAppData.rawValue, refloatMagic, 0x00]) // CommandInfo = 0
+    }
+
+    struct RefloatInfo {
+        var name: String = ""
+        var major: UInt8 = 0
+        var minor: UInt8 = 0
+        var patch: UInt8 = 0
+        var suffix: String = ""
+
+        var versionString: String {
+            var s = "\(major).\(minor).\(patch)"
+            if !suffix.isEmpty { s += "-\(suffix)" }
+            return s
+        }
+    }
+
+    /// Parse a Refloat info response. Payload: [cmd=36][magic=0x65][cmdId=0][version=2]...
+    static func parseRefloatInfo(_ payload: Data) -> RefloatInfo? {
+        guard payload.count > 5,
+              payload[payload.startIndex] == CommPacketID.customAppData.rawValue,
+              payload[payload.startIndex + 1] == refloatMagic,
+              payload[payload.startIndex + 2] == 0x00 else { return nil }
+
+        var info = RefloatInfo()
+        let version = payload[payload.startIndex + 3]
+        if version >= 2 {
+            // v2 format: [version][major][minor][patch][name:20 bytes][suffix:20 bytes]...
+            guard payload.count >= payload.startIndex + 4 + 3 + 40 else { return nil }
+            info.major = payload[payload.startIndex + 4]
+            info.minor = payload[payload.startIndex + 5]
+            info.patch = payload[payload.startIndex + 6]
+
+            let nameStart = payload.startIndex + 7
+            let nameBytes = payload[nameStart..<nameStart+20]
+            info.name = String(bytes: nameBytes.prefix(while: { $0 != 0 }), encoding: .utf8) ?? ""
+
+            let suffixStart = nameStart + 20
+            let suffixBytes = payload[suffixStart..<suffixStart+20]
+            info.suffix = String(bytes: suffixBytes.prefix(while: { $0 != 0 }), encoding: .utf8) ?? ""
+        }
+
+        return info
     }
 }

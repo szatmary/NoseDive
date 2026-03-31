@@ -71,6 +71,16 @@ class TCPTransport {
         send(Data([VESCPacket.CommPacketID.pingCAN.rawValue]))
     }
 
+    /// Send a COMM_FW_VERSION request for a CAN device.
+    func requestFWVersionForCAN(targetID: UInt8) {
+        send(VESCPacket.buildFWVersionRequestForCAN(targetID: targetID))
+    }
+
+    /// Send a Refloat info request.
+    func requestRefloatInfo() {
+        send(VESCPacket.buildRefloatInfoRequest())
+    }
+
     /// Send a COMM_FW_VERSION request.
     func requestFWVersion() {
         send(Data([VESCPacket.CommPacketID.fwVersion.rawValue]))

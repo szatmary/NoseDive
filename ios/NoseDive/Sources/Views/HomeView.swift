@@ -30,6 +30,10 @@ struct HomeView: View {
             .sheet(isPresented: $showTCPSheet) {
                 tcpConnectSheet
             }
+            .sheet(isPresented: $boardManager.showWizard) {
+                SetupWizardView(isPresented: $boardManager.showWizard)
+                    .environmentObject(boardManager)
+            }
         }
     }
 
@@ -91,6 +95,23 @@ struct HomeView: View {
                             .font(.caption)
                             .foregroundStyle(Theme.textTertiary)
                     }
+                }
+            }
+
+            if !board.wizardComplete {
+                Button {
+                    boardManager.showWizard = true
+                } label: {
+                    HStack {
+                        Image(systemName: "wand.and.stars")
+                        Text("Run Setup Wizard")
+                    }
+                    .font(.caption.bold())
+                    .foregroundStyle(.white)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(Theme.primary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
             }
         }
