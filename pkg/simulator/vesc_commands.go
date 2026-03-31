@@ -104,20 +104,21 @@ func (s *Simulator) buildGetValuesSetupResponse() []byte {
 	resp = vesc.AppendFloat32(resp, s.state.ERPM, 1)                // rpm
 	resp = vesc.AppendFloat32(resp, s.state.Speed, 1000)            // speed (m/s, scale=1e3)
 	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)            // input_voltage
-	resp = vesc.AppendFloat16(resp, 0.85, 1000)                     // battery_level (0-1)
-	resp = vesc.AppendFloat32(resp, s.state.AmpHours, 10000)        // ah_tot
-	resp = vesc.AppendFloat32(resp, s.state.AmpHoursCharged, 10000) // ah_charge_tot
-	resp = vesc.AppendFloat32(resp, s.state.WattHours, 10000)       // wh_tot
-	resp = vesc.AppendFloat32(resp, s.state.WattHoursCharged, 10000) // wh_charge_tot
-	resp = vesc.AppendFloat32(resp, 0, 1000)                        // distance
-	resp = vesc.AppendFloat32(resp, 0, 1000)                        // distance_abs
-	resp = vesc.AppendFloat32(resp, 0, 1000000)                     // pid_pos_now
-	resp = append(resp, byte(s.state.Fault))                         // fault_code
-	resp = append(resp, s.state.ControllerID)                        // controller_id
-	resp = append(resp, 1)                                           // num_vescs
-	resp = vesc.AppendFloat32(resp, 0, 1000)                         // wh_batt_left
-	resp = vesc.AppendUint32(resp, 0)                                // odometer
-	resp = vesc.AppendUint32(resp, 0)                                // uptime_ms
+	resp = vesc.AppendFloat16(resp, s.state.BatteryPercent(), 1000)     // battery_level (0-1)
+	resp = vesc.AppendFloat32(resp, s.state.AmpHours, 10000)           // ah_tot
+	resp = vesc.AppendFloat32(resp, s.state.AmpHoursCharged, 10000)    // ah_charge_tot
+	resp = vesc.AppendFloat32(resp, s.state.WattHours, 10000)          // wh_tot
+	resp = vesc.AppendFloat32(resp, s.state.WattHoursCharged, 10000)   // wh_charge_tot
+	resp = vesc.AppendFloat32(resp, s.state.Distance, 1000)            // distance (meters)
+	resp = vesc.AppendFloat32(resp, s.state.Distance, 1000)            // distance_abs
+	resp = vesc.AppendFloat32(resp, 0, 1000000)                        // pid_pos_now
+	resp = append(resp, byte(s.state.Fault))                            // fault_code
+	resp = append(resp, s.state.ControllerID)                           // controller_id
+	resp = append(resp, 1)                                              // num_vescs
+	whLeft := s.state.BatteryPercent() * 720.0                          // estimated Wh remaining
+	resp = vesc.AppendFloat32(resp, whLeft, 1000)                       // wh_batt_left
+	resp = vesc.AppendUint32(resp, uint32(s.state.Odometer))            // odometer (meters)
+	resp = vesc.AppendUint32(resp, s.state.UptimeMs)                    // uptime_ms
 
 	return resp
 }
@@ -149,23 +150,31 @@ func (s *Simulator) buildGetIMUDataResponse(payload []byte) []byte {
 		resp = vesc.AppendFloat32(resp, s.state.Pitch, 1000000)
 		resp = vesc.AppendFloat32(resp, 0, 1000000) // yaw
 	}
-	// Bit 1: accel x, y, z
+	// Bit 1: accel x, y, z (from tilt angles + gravity)
 	if mask&(1<<1) != 0 {
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // accel_x
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // accel_y
-		resp = vesc.AppendFloat32(resp, -9.81, 1000000) // accel_z (gravity)
+		pitchRad := s.state.Pitch * math.Pi / 180
+		rollRad := s.state.Roll * math.Pi / 180
+		// Gravity projected through tilt
+		ax := -9.81 * math.Sin(pitchRad)
+		ay := 9.81 * math.Sin(rollRad) * math.Cos(pitchRad)
+		az := -9.81 * math.Cos(pitchRad) * math.Cos(rollRad)
+		resp = vesc.AppendFloat32(resp, ax, 1000000)
+		resp = vesc.AppendFloat32(resp, ay, 1000000)
+		resp = vesc.AppendFloat32(resp, az, 1000000)
 	}
-	// Bit 2: gyro x, y, z
+	// Bit 2: gyro x, y, z (deg/s from pitch/roll rate of change)
 	if mask&(1<<2) != 0 {
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // gyro_x
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // gyro_y
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // gyro_z
+		gyroPitch := (s.state.Pitch - s.state.PrevPitch) / 0.02  // deg/s
+		gyroRoll := (s.state.Roll - s.state.PrevRoll) / 0.02
+		resp = vesc.AppendFloat32(resp, gyroRoll, 1000000)   // gyro_x = roll rate
+		resp = vesc.AppendFloat32(resp, gyroPitch, 1000000)  // gyro_y = pitch rate
+		resp = vesc.AppendFloat32(resp, 0, 1000000)          // gyro_z = yaw rate
 	}
-	// Bit 3: mag x, y, z
+	// Bit 3: mag x, y, z (simulated compass heading — roughly north)
 	if mask&(1<<3) != 0 {
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // mag_x
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // mag_y
-		resp = vesc.AppendFloat32(resp, 0, 1000000) // mag_z
+		resp = vesc.AppendFloat32(resp, 0.25, 1000000)  // mag_x (Gauss)
+		resp = vesc.AppendFloat32(resp, 0.0, 1000000)   // mag_y
+		resp = vesc.AppendFloat32(resp, -0.45, 1000000) // mag_z
 	}
 	// Bit 4: quaternion w, x, y, z
 	if mask&(1<<4) != 0 {
@@ -327,8 +336,11 @@ func (s *Simulator) buildGetAppConfResponse() []byte {
 // buildGetBatteryCutResponse returns battery cutoff values.
 func (s *Simulator) buildGetBatteryCutResponse() []byte {
 	resp := []byte{byte(vesc.CommGetBatteryCut)}
-	resp = vesc.AppendFloat32(resp, 42.0, 1000) // start voltage
-	resp = vesc.AppendFloat32(resp, 40.0, 1000) // end voltage
+	// Start cutoff slightly above min, end at min
+	cutStart := s.state.BatteryVoltageMin + 2.0
+	cutEnd := s.state.BatteryVoltageMin
+	resp = vesc.AppendFloat32(resp, cutStart, 1000)
+	resp = vesc.AppendFloat32(resp, cutEnd, 1000)
 	return resp
 }
 
@@ -343,29 +355,33 @@ func (s *Simulator) buildGetStatsResponse(payload []byte) []byte {
 	}
 	resp = vesc.AppendUint32(resp, mask)
 
+	samples := float64(s.state.StatSamples)
+	if samples < 1 {
+		samples = 1
+	}
 	// Bit 0: speed_avg (float32_auto)
 	if mask&(1<<0) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.SpeedSum/samples)
 	}
 	// Bit 1: speed_max (float32_auto)
 	if mask&(1<<1) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.SpeedMax)
 	}
 	// Bit 2: power_avg (float32_auto)
 	if mask&(1<<2) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.PowerSum/samples)
 	}
 	// Bit 3: power_max (float32_auto)
 	if mask&(1<<3) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.PowerMax)
 	}
 	// Bit 4: current_avg (float32_auto)
 	if mask&(1<<4) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.CurrentSum/samples)
 	}
 	// Bit 5: current_max (float32_auto)
 	if mask&(1<<5) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, s.state.CurrentMax)
 	}
 	// Bit 6: temp_mos_avg (float32_auto)
 	if mask&(1<<6) != 0 {
@@ -373,7 +389,7 @@ func (s *Simulator) buildGetStatsResponse(payload []byte) []byte {
 	}
 	// Bit 7: temp_mos_max (float32_auto)
 	if mask&(1<<7) != 0 {
-		resp = appendFloat32Auto(resp, s.state.MOSFETTemp)
+		resp = appendFloat32Auto(resp, s.state.MOSFETTempMax)
 	}
 	// Bit 8: temp_motor_avg (float32_auto)
 	if mask&(1<<8) != 0 {
@@ -381,11 +397,11 @@ func (s *Simulator) buildGetStatsResponse(payload []byte) []byte {
 	}
 	// Bit 9: temp_motor_max (float32_auto)
 	if mask&(1<<9) != 0 {
-		resp = appendFloat32Auto(resp, s.state.MotorTemp)
+		resp = appendFloat32Auto(resp, s.state.MotorTempMax)
 	}
-	// Bit 10: count_time (float32_auto)
+	// Bit 10: count_time (float32_auto) — uptime in seconds
 	if mask&(1<<10) != 0 {
-		resp = appendFloat32Auto(resp, 0)
+		resp = appendFloat32Auto(resp, float64(s.state.UptimeMs)/1000.0)
 	}
 
 	return resp

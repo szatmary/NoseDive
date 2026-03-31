@@ -89,9 +89,14 @@ type stateJSON struct {
 	BalanceCurrent float64 `json:"balanceCurrent"`
 
 	// Counters
-	AmpHours    float64 `json:"ampHours"`
-	WattHours   float64 `json:"wattHours"`
-	Tachometer  int32   `json:"tachometer"`
+	AmpHours       float64 `json:"ampHours"`
+	WattHours      float64 `json:"wattHours"`
+	Tachometer     int32   `json:"tachometer"`
+	Distance       float64 `json:"distance"`
+	Odometer       float64 `json:"odometer"`
+	BatteryPercent float64 `json:"batteryPercent"`
+	SpeedMax       float64 `json:"speedMax"`
+	UptimeMs       uint32  `json:"uptimeMs"`
 }
 
 func (s *Simulator) boardStateToJSON(bs *BoardState) stateJSON {
@@ -120,6 +125,11 @@ func (s *Simulator) boardStateToJSON(bs *BoardState) stateJSON {
 		AmpHours:       bs.AmpHours,
 		WattHours:      bs.WattHours,
 		Tachometer:     bs.Tachometer,
+		Distance:       bs.Distance,
+		Odometer:       bs.Odometer,
+		BatteryPercent: bs.BatteryPercent() * 100,
+		SpeedMax:       bs.SpeedMax,
+		UptimeMs:       bs.UptimeMs,
 	}
 	if s.profile != nil {
 		sj.ProfileName = s.profile.Name

@@ -58,8 +58,10 @@ type BoardState struct {
 	Charging      bool
 
 	// IMU
-	Pitch float64
-	Roll  float64
+	Pitch     float64
+	Roll      float64
+	PrevPitch float64 // previous tick pitch for gyro rate
+	PrevRoll  float64 // previous tick roll for gyro rate
 
 	// Footpad ADC
 	ADC1 float64
@@ -76,6 +78,25 @@ type BoardState struct {
 	WattHoursCharged float64
 	Tachometer       int32
 	TachometerAbs    int32
+	Distance         float64 // meters, accumulated
+	Odometer         float64 // lifetime meters
+
+	// Stats (accumulated during ride)
+	SpeedMax     float64
+	SpeedSum     float64
+	PowerMax     float64
+	PowerSum     float64
+	CurrentMax   float64
+	CurrentSum   float64
+	MOSFETTempMax float64
+	MotorTempMax  float64
+	StatSamples  uint32 // number of samples for averages
+	UptimeMs     uint32 // milliseconds since start
+
+	// Battery config
+	BatterySeriesCells int
+	BatteryVoltageMin  float64
+	BatteryVoltageMax  float64
 
 	// Refloat package info
 	PkgName   string
@@ -85,17 +106,24 @@ type BoardState struct {
 	PkgSuffix string
 
 	// Motor detection results (populated from profile or defaults)
-	MotorResistance float64 // ohms
-	MotorInductance float64 // henries
+	MotorResistance  float64 // ohms
+	MotorInductance  float64 // henries
 	MotorFluxLinkage float64 // weber
-	HallSensorTable [8]uint8
-	MotorPolePairs  int
+	HallSensorTable  [8]uint8
+	MotorPolePairs   int
+	WheelCircumM     float64 // wheel circumference in meters
 
 	// Config data
 	ConfigXML  []byte // Refloat custom config XML
 	ConfigData []byte // Serialized Refloat custom config binary
 	MCConf     []byte // Motor controller config blob
 	AppConf    []byte // App config blob
+
+	// LCM (LED Controller Module)
+	LCMPresent       bool
+	LCMLedType       uint8  // 0=none, 1=RGB, 2=RGBW
+	LCMHeadlightOn   bool
+	LCMTaillightOn   bool
 }
 
 // DefaultBoardState returns a realistic idle board state.
@@ -121,11 +149,19 @@ func DefaultBoardState() *BoardState {
 		PkgMinor:     0,
 		PkgPatch:     1,
 		PkgSuffix:    "sim",
-		MotorResistance:  0.088,                                              // 88 mOhm typical Superflux/Hypercore
-		MotorInductance:  0.000233,                                            // 233 uH
-		MotorFluxLinkage: 0.028,                                               // 28 mWb
-		HallSensorTable:  [8]uint8{255, 1, 3, 2, 5, 6, 4, 255},               // typical hall table
-		MotorPolePairs:   15,                                                  // common for onewheel motors
+		MotorResistance:  0.088,
+		MotorInductance:  0.000233,
+		MotorFluxLinkage: 0.028,
+		HallSensorTable:  [8]uint8{255, 1, 3, 2, 5, 6, 4, 255},
+		MotorPolePairs:   15,
+		WheelCircumM:     0.8778, // 11" tire
+		BatterySeriesCells: 15,
+		BatteryVoltageMin:  42.0,  // 15S × 2.8V
+		BatteryVoltageMax:  63.0,  // 15S × 4.2V
+		LCMPresent:       true,
+		LCMLedType:       2,      // RGBW
+		LCMHeadlightOn:   true,
+		LCMTaillightOn:   true,
 		ConfigXML:        compressConfigXML(refloatConfigXML),
 		MCConf:           generateDefaultMCConf(),
 		AppConf:          generateDefaultAppConf(),
@@ -174,6 +210,16 @@ func NewWithProfile(p *board.Profile) *Simulator {
 		for i, v := range p.Motor.HallSensorTable {
 			bs.HallSensorTable[i] = uint8(v)
 		}
+	}
+
+	// Battery from profile
+	bs.BatterySeriesCells = p.Battery.SeriesCells
+	bs.BatteryVoltageMin = p.Battery.VoltageMin
+	bs.BatteryVoltageMax = p.Battery.VoltageMax
+
+	// Wheel from profile
+	if p.Wheel.CircumferenceM > 0 {
+		bs.WheelCircumM = p.Wheel.CircumferenceM
 	}
 
 	s := &Simulator{
@@ -673,7 +719,7 @@ func (s *Simulator) buildRefloatAllDataResponse(mode uint8) []byte {
 
 	// mode >= 2
 	if mode >= 2 {
-		resp = appendFloat32Auto(resp, 0) // distance
+		resp = appendFloat32Auto(resp, s.state.Distance)
 		resp = append(resp, clampUint8(s.state.MOSFETTemp*2))
 		resp = append(resp, clampUint8(s.state.MotorTemp*2))
 		resp = append(resp, 0) // reserved
@@ -681,12 +727,12 @@ func (s *Simulator) buildRefloatAllDataResponse(mode uint8) []byte {
 
 	// mode >= 3
 	if mode >= 3 {
-		resp = vesc.AppendUint32(resp, 0) // odometer
+		resp = vesc.AppendUint32(resp, uint32(s.state.Odometer))
 		resp = vesc.AppendFloat16(resp, s.state.AmpHours, 10)
 		resp = vesc.AppendFloat16(resp, s.state.AmpHoursCharged, 10)
 		resp = vesc.AppendFloat16(resp, s.state.WattHours, 1)
 		resp = vesc.AppendFloat16(resp, s.state.WattHoursCharged, 1)
-		resp = append(resp, clampUint8(0.85*200)) // battery level 85%
+		resp = append(resp, clampUint8(s.state.BatteryPercent()*200))
 	}
 
 	return resp
@@ -694,49 +740,68 @@ func (s *Simulator) buildRefloatAllDataResponse(mode uint8) []byte {
 
 func (s *Simulator) buildRefloatLightsControlResponse(data []byte) []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLightsControl)}
-	// Response: headlights_enabled << 1 | enabled
-	resp = append(resp, 0x03) // both enabled
+	// Parse incoming control if present
+	if len(data) >= 1 {
+		ctrl := data[0]
+		s.state.LCMTaillightOn = ctrl&0x01 != 0
+		s.state.LCMHeadlightOn = ctrl&0x02 != 0
+	}
+	// Response: headlights_enabled << 1 | taillights_enabled
+	var flags uint8
+	if s.state.LCMTaillightOn {
+		flags |= 0x01
+	}
+	if s.state.LCMHeadlightOn {
+		flags |= 0x02
+	}
+	resp = append(resp, flags)
 	return resp
 }
 
 func (s *Simulator) buildRefloatLCMPollResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMPoll)}
-	// state byte: bits 0-3 = state_compat, bits 4-5 = footpad_sensor_state, bit 7 = handtest
 	stateCompat := encodeStateCompat(s.state.RunState, s.state.StopCondition)
 	stateByte := stateCompat | (uint8(s.state.Footpad) << 4)
 	if s.state.Mode == refloat.ModeHandtest {
 		stateByte |= 0x80
 	}
 	resp = append(resp, stateByte)
-	resp = append(resp, byte(s.state.Fault))            // fault code
-	resp = append(resp, 0)                               // duty or pitch
-	resp = vesc.AppendFloat16(resp, s.state.ERPM, 1)     // erpm
-	resp = vesc.AppendFloat16(resp, s.state.BattCurrent, 1) // total current in
-	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10) // input voltage
-	resp = append(resp, 128)                              // brightness
-	resp = append(resp, 64)                               // brightness_idle
-	resp = append(resp, 128)                              // status_brightness
+	resp = append(resp, byte(s.state.Fault))
+	resp = append(resp, clampUint8(s.state.DutyCycle*100+128)) // duty encoded
+	resp = vesc.AppendFloat16(resp, s.state.ERPM, 1)
+	resp = vesc.AppendFloat16(resp, s.state.BattCurrent, 1)
+	resp = vesc.AppendFloat16(resp, s.state.Voltage, 10)
+	resp = append(resp, 128) // brightness
+	resp = append(resp, 64)  // brightness_idle
+	resp = append(resp, 128) // status_brightness
 	return resp
 }
 
 func (s *Simulator) buildRefloatLCMLightInfoResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMLightInfo)}
-	// LED type: 0 = no LCM
-	resp = append(resp, 0)
+	if s.state.LCMPresent {
+		resp = append(resp, s.state.LCMLedType) // 1=RGB, 2=RGBW
+	} else {
+		resp = append(resp, 0) // no LCM
+	}
 	return resp
 }
 
 func (s *Simulator) buildRefloatLCMDeviceInfoResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMDeviceInfo)}
-	// Empty string (no LCM device)
-	resp = append(resp, 0)
+	if s.state.LCMPresent {
+		name := "NoseDive LCM Sim"
+		resp = append(resp, []byte(name)...)
+		resp = append(resp, 0)
+	} else {
+		resp = append(resp, 0)
+	}
 	return resp
 }
 
 func (s *Simulator) buildRefloatBatteryResponse() []byte {
 	resp := []byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandLCMGetBattery)}
-	// Battery level as float32_auto (0.0-1.0)
-	resp = appendFloat32Auto(resp, 0.85)
+	resp = appendFloat32Auto(resp, s.state.BatteryPercent())
 	return resp
 }
 
@@ -886,12 +951,19 @@ func (s *Simulator) physicsLoop() {
 	}
 }
 
+const physTickSec = 0.02 // 50 Hz = 20ms per tick
+
 func (s *Simulator) updatePhysics() {
 	st := s.state
+	st.UptimeMs += 20
 
-	// Add tiny noise to sensors
-	st.ADC1 += (rand.Float64() - 0.5) * 0.01
-	st.ADC2 += (rand.Float64() - 0.5) * 0.01
+	// Save previous IMU for gyro rate calculation
+	st.PrevPitch = st.Pitch
+	st.PrevRoll = st.Roll
+
+	// Sensor noise on ADC
+	st.ADC1 += (rand.Float64() - 0.5) * 0.02
+	st.ADC2 += (rand.Float64() - 0.5) * 0.02
 	if st.ADC1 < 0 {
 		st.ADC1 = 0
 	}
@@ -899,22 +971,25 @@ func (s *Simulator) updatePhysics() {
 		st.ADC2 = 0
 	}
 
+	// ERPM per m/s = polePairs * 60 / wheelCircumM
+	erpmPerMPS := float64(st.MotorPolePairs) * 60.0 / st.WheelCircumM
+
 	// State machine
 	switch st.RunState {
 	case refloat.StateReady:
-		// Board is idle. If both footpads engaged and pitch is level, start balancing.
 		if st.Footpad == refloat.FootpadBoth && math.Abs(st.Pitch) < 5.0 && math.Abs(st.Roll) < 30.0 {
 			st.RunState = refloat.StateRunning
 			st.StopCondition = refloat.StopNone
 		}
-		// Gradually reduce speed when idle
-		st.Speed *= 0.95
-		st.ERPM *= 0.95
-		st.MotorCurrent *= 0.9
-		st.DutyCycle *= 0.9
+		// Coast to stop
+		st.Speed *= 0.92
+		st.MotorCurrent *= 0.85
+		st.BalanceCurrent *= 0.85
+		st.ERPM = st.Speed * erpmPerMPS
+		st.DutyCycle = st.Speed / 15.0
 
 	case refloat.StateRunning:
-		// Check fault conditions
+		// Fault checks
 		if math.Abs(st.Pitch) > 15.0 {
 			st.RunState = refloat.StateReady
 			st.StopCondition = refloat.StopPitch
@@ -931,40 +1006,113 @@ func (s *Simulator) updatePhysics() {
 			break
 		}
 
-		// Simple balance physics: pitch drives motor current
-		st.BalanceCurrent = st.Pitch * 2.0 // P controller
+		// PD balance controller: current = Kp*pitch + Kd*pitchRate
+		pitchRate := (st.Pitch - st.PrevPitch) / physTickSec
+		st.BalanceCurrent = st.Pitch*3.0 + pitchRate*0.15
+		// Clamp to realistic motor current limits
+		if st.BalanceCurrent > 40 {
+			st.BalanceCurrent = 40
+		}
+		if st.BalanceCurrent < -40 {
+			st.BalanceCurrent = -40
+		}
 		st.MotorCurrent = st.BalanceCurrent
 
-		// Speed responds to pitch
-		st.Speed += st.Pitch * 0.01
-		st.Speed *= 0.99 // drag
+		// Speed: pitch tilts accelerate, with friction + aero drag
+		accel := st.Pitch * 0.015                        // tilt → acceleration
+		friction := st.Speed * 0.005                      // rolling friction
+		aero := st.Speed * math.Abs(st.Speed) * 0.0005   // air drag (quadratic)
+		st.Speed += accel - friction - aero
 
-		// ERPM from speed (rough: 1 m/s ~ 700 ERPM for typical setup)
-		st.ERPM = st.Speed * 700.0
+		// Clamp speed to reasonable range
+		if st.Speed > 15 {
+			st.Speed = 15
+		}
+		if st.Speed < -8 {
+			st.Speed = -8
+		}
 
-		// Duty from speed
-		st.DutyCycle = st.Speed / 15.0 // max ~15 m/s
-
-		// Battery current from motor current and duty
+		st.ERPM = st.Speed * erpmPerMPS
+		st.DutyCycle = st.Speed / 15.0
 		st.BattCurrent = st.MotorCurrent * math.Abs(st.DutyCycle)
 
-		// Setpoint adjustment
+		// Tachometer: accumulate from ERPM
+		// ERPM is electrical RPM; tach counts electrical revolutions
+		// tach_per_tick = ERPM / 60 * tickSec
+		tachDelta := st.ERPM / 60.0 * physTickSec
+		st.Tachometer += int32(tachDelta)
+		st.TachometerAbs += int32(math.Abs(tachDelta))
+
+		// Distance from wheel speed
+		distDelta := math.Abs(st.Speed) * physTickSec
+		st.Distance += distDelta
+		st.Odometer += distDelta
+
+		// SAT (Setpoint Adjustment Type)
 		st.SAT = refloat.SATNone
 		if math.Abs(st.DutyCycle) > 0.8 {
 			st.SAT = refloat.SATPBDuty
 		}
+		if st.Voltage < st.BatteryVoltageMin+2.0 {
+			st.SAT = refloat.SATPBLowVoltage
+		}
 
-		// Slow voltage drain
-		st.Voltage -= 0.00001
-
-		// Temperature rises slowly under load
-		st.MOSFETTemp += math.Abs(st.MotorCurrent) * 0.0001
-		st.MotorTemp += math.Abs(st.MotorCurrent) * 0.00005
+		// Voltage: drain proportional to power draw
+		power := math.Abs(st.BattCurrent * st.Voltage)
+		// A 720Wh pack at 63V = ~41Ah. V drop = I * R_internal + energy drain
+		st.Voltage -= math.Abs(st.BattCurrent) * 0.003 * physTickSec // sag from internal R
+		st.Voltage -= power * physTickSec / (41.0 * 3600.0) * st.BatteryVoltageMax // energy drain
 
 		// Counters
-		st.AmpHours += math.Abs(st.BattCurrent) * 0.02 / 3600.0
-		st.WattHours += math.Abs(st.BattCurrent*st.Voltage) * 0.02 / 3600.0
+		st.AmpHours += math.Abs(st.BattCurrent) * physTickSec / 3600.0
+		st.WattHours += power * physTickSec / 3600.0
 	}
+
+	// Temperature model: load heats, ambient cools (both states)
+	ambientTemp := 25.0
+	st.MOSFETTemp += math.Abs(st.MotorCurrent) * 0.0003
+	st.MOSFETTemp -= (st.MOSFETTemp - ambientTemp) * 0.0002 // cooling toward ambient
+	st.MotorTemp += math.Abs(st.MotorCurrent) * 0.00015
+	st.MotorTemp -= (st.MotorTemp - ambientTemp) * 0.00008 // motor cools slower
+
+	// Stats tracking
+	absSpeed := math.Abs(st.Speed)
+	power := math.Abs(st.BattCurrent * st.Voltage)
+	absCurrent := math.Abs(st.MotorCurrent)
+	if absSpeed > st.SpeedMax {
+		st.SpeedMax = absSpeed
+	}
+	if power > st.PowerMax {
+		st.PowerMax = power
+	}
+	if absCurrent > st.CurrentMax {
+		st.CurrentMax = absCurrent
+	}
+	if st.MOSFETTemp > st.MOSFETTempMax {
+		st.MOSFETTempMax = st.MOSFETTemp
+	}
+	if st.MotorTemp > st.MotorTempMax {
+		st.MotorTempMax = st.MotorTemp
+	}
+	st.SpeedSum += absSpeed
+	st.PowerSum += power
+	st.CurrentSum += absCurrent
+	st.StatSamples++
+}
+
+// BatteryPercent returns 0-1 based on voltage and cell config.
+func (s *BoardState) BatteryPercent() float64 {
+	if s.BatteryVoltageMax <= s.BatteryVoltageMin {
+		return 0.5
+	}
+	pct := (s.Voltage - s.BatteryVoltageMin) / (s.BatteryVoltageMax - s.BatteryVoltageMin)
+	if pct > 1 {
+		pct = 1
+	}
+	if pct < 0 {
+		pct = 0
+	}
+	return pct
 }
 
 // appendFloat32Auto encodes using VESC's float32_auto format (5 bytes).
