@@ -62,17 +62,8 @@ struct FirmwareCheckView: View {
 
     private var expressSection: some View {
         Group {
-            if let dev = boardManager.deviceFWInfo[253] {
-                firmwareCard(
-                    title: "VESC Express",
-                    icon: "wifi",
-                    step: 1,
-                    currentFW: dev.fwVersionString,
-                    latestFW: "\(Self.latestExpressFW.major).\(Self.latestExpressFW.minor)",
-                    isUpToDate: isExpressUpToDate(dev),
-                    detail: dev.fwInfo?.hwName ?? "ESP32"
-                )
-            } else if boardManager.canDevices.contains(253) {
+            if boardManager.canDevices.contains(253) {
+                // Express FW not available via nd_engine_get_main_fw — show as querying
                 firmwareCard(
                     title: "VESC Express",
                     icon: "wifi",
@@ -80,7 +71,7 @@ struct FirmwareCheckView: View {
                     currentFW: "Querying…",
                     latestFW: "\(Self.latestExpressFW.major).\(Self.latestExpressFW.minor)",
                     isUpToDate: nil,
-                    detail: nil
+                    detail: "ESP32"
                 )
             }
         }
@@ -90,15 +81,15 @@ struct FirmwareCheckView: View {
 
     private var vescSection: some View {
         Group {
-            if let dev = boardManager.deviceFWInfo[0] {
+            if let fw = boardManager.mainFWInfo {
                 firmwareCard(
                     title: "VESC Motor Controller",
                     icon: "cpu",
                     step: 2,
-                    currentFW: dev.fwVersionString,
+                    currentFW: fw.versionString,
                     latestFW: "\(Self.latestVESCFW.major).\(Self.latestVESCFW.minor)",
-                    isUpToDate: isVESCUpToDate(dev),
-                    detail: dev.fwInfo?.hwName
+                    isUpToDate: isFWUpToDate(fw, latest: Self.latestVESCFW),
+                    detail: fw.hwName
                 )
             }
         }
@@ -118,7 +109,7 @@ struct FirmwareCheckView: View {
                     isUpToDate: isRefloatUpToDate(refloat),
                     detail: refloat.name
                 )
-            } else if let dev = boardManager.deviceFWInfo[0], dev.hasRefloat {
+            } else if let fw = boardManager.mainFWInfo, fw.customConfigCount > 0 {
                 firmwareCard(
                     title: "Refloat Package",
                     icon: "figure.surfing",
@@ -138,17 +129,8 @@ struct FirmwareCheckView: View {
 
     private var bmsSection: some View {
         Group {
-            if let dev = boardManager.deviceFWInfo[10] {
-                firmwareCard(
-                    title: "BMS",
-                    icon: "battery.100.bolt",
-                    step: 3,
-                    currentFW: dev.fwVersionString,
-                    latestFW: "\(Self.latestVESCFW.major).\(Self.latestVESCFW.minor)",
-                    isUpToDate: isBMSUpToDate(dev),
-                    detail: dev.fwInfo?.hwName ?? "VESC BMS"
-                )
-            } else if boardManager.canDevices.contains(10) {
+            if boardManager.canDevices.contains(10) {
+                // BMS FW not available via nd_engine_get_main_fw — show as querying
                 firmwareCard(
                     title: "BMS",
                     icon: "battery.100.bolt",
@@ -156,10 +138,9 @@ struct FirmwareCheckView: View {
                     currentFW: "Querying…",
                     latestFW: "\(Self.latestVESCFW.major).\(Self.latestVESCFW.minor)",
                     isUpToDate: nil,
-                    detail: nil
+                    detail: "VESC BMS"
                 )
             }
-            // No BMS on bus = don't show
         }
     }
 
@@ -284,16 +265,9 @@ struct FirmwareCheckView: View {
 
     // MARK: - Version checks
 
-    private func isExpressUpToDate(_ dev: DeviceFWInfo) -> Bool {
-        guard let fw = dev.fwInfo else { return false }
-        return fw.major > Self.latestExpressFW.major ||
-            (fw.major == Self.latestExpressFW.major && fw.minor >= Self.latestExpressFW.minor)
-    }
-
-    private func isVESCUpToDate(_ dev: DeviceFWInfo) -> Bool {
-        guard let fw = dev.fwInfo else { return false }
-        return fw.major > Self.latestVESCFW.major ||
-            (fw.major == Self.latestVESCFW.major && fw.minor >= Self.latestVESCFW.minor)
+    private func isFWUpToDate(_ fw: FWVersionInfo, latest: (major: UInt8, minor: UInt8)) -> Bool {
+        fw.major > latest.major ||
+            (fw.major == latest.major && fw.minor >= latest.minor)
     }
 
     private func isRefloatUpToDate(_ info: RefloatInfo) -> Bool {
@@ -302,11 +276,5 @@ struct FirmwareCheckView: View {
         if info.minor > Self.latestRefloat.minor { return true }
         if info.minor < Self.latestRefloat.minor { return false }
         return info.patch >= Self.latestRefloat.patch
-    }
-
-    private func isBMSUpToDate(_ dev: DeviceFWInfo) -> Bool {
-        guard let fw = dev.fwInfo else { return false }
-        return fw.major > Self.latestVESCFW.major ||
-            (fw.major == Self.latestVESCFW.major && fw.minor >= Self.latestVESCFW.minor)
     }
 }

@@ -36,6 +36,19 @@ struct RefloatInfo {
     }
 }
 
+/// Firmware version info (from C++ engine via nd_fw_version_t)
+struct FWVersionInfo {
+    var hwName: String = ""
+    var major: UInt8 = 0
+    var minor: UInt8 = 0
+    var uuid: String = ""
+    var hwType: UInt8 = 0
+    var customConfigCount: UInt8 = 0
+    var packageName: String = ""
+
+    var versionString: String { "\(major).\(minor)" }
+}
+
 /// Refloat-specific telemetry
 struct RefloatState {
     var runState: RunState = .disabled

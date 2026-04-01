@@ -22,6 +22,7 @@ class BoardManager: ObservableObject {
     @Published var canDevices: [UInt8] = []
     @Published var showWizard = false
     @Published var refloatInfo: RefloatInfo?
+    @Published var mainFWInfo: FWVersionInfo?
     @Published var refloatInstalling = false
     @Published var refloatInstalled = false
 
@@ -104,6 +105,26 @@ class BoardManager: ObservableObject {
         // CAN devices
         let canCount = nd_engine_can_device_count(engine)
         canDevices = (0..<canCount).map { nd_engine_can_device_id(engine, $0) }
+
+        // Main firmware info
+        if nd_engine_has_active_board(engine) {
+            let fw = nd_engine_get_main_fw(engine)
+            if fw.major > 0 || fw.minor > 0 {
+                mainFWInfo = FWVersionInfo(
+                    hwName: String(cString: fw.hw_name),
+                    major: fw.major,
+                    minor: fw.minor,
+                    uuid: String(cString: fw.uuid),
+                    hwType: fw.hw_type,
+                    customConfigCount: fw.custom_config_count,
+                    packageName: String(cString: fw.package_name)
+                )
+            } else {
+                mainFWInfo = nil
+            }
+        } else {
+            mainFWInfo = nil
+        }
 
         // Wizard
         showWizard = nd_engine_should_show_wizard(engine)

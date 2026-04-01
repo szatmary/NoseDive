@@ -164,15 +164,15 @@ struct IdentifyStepView: View {
                     .foregroundStyle(Theme.textPrimary)
 
                 // Board info card
-                if let mainFW = boardManager.deviceFWInfo[0]?.fwInfo {
+                if let fw = boardManager.mainFWInfo {
                     VStack(spacing: 12) {
-                        infoRow("Hardware", mainFW.hwName)
-                        infoRow("Firmware", "\(mainFW.major).\(mainFW.minor)")
-                        infoRow("UUID", String(mainFW.uuid.prefix(16)) + "…")
+                        infoRow("Hardware", fw.hwName)
+                        infoRow("Firmware", fw.versionString)
+                        infoRow("UUID", String(fw.uuid.prefix(16)) + "…")
 
                         if let refloat = boardManager.refloatInfo {
                             infoRow("Package", "\(refloat.name) \(refloat.versionString)")
-                        } else if mainFW.customConfigCount > 0 {
+                        } else if fw.customConfigCount > 0 {
                             infoRow("Package", "Detected (querying…)")
                         } else {
                             infoRow("Package", "None installed")
@@ -201,29 +201,24 @@ struct IdentifyStepView: View {
                             .foregroundStyle(Theme.textPrimary)
 
                         ForEach(boardManager.canDevices, id: \.self) { id in
-                            let dev = boardManager.deviceFWInfo[id]
                             HStack {
                                 Image(systemName: iconForDevice(id))
                                     .foregroundStyle(Theme.primary)
                                     .frame(width: 24)
                                 VStack(alignment: .leading, spacing: 2) {
-                                    Text(dev?.displayName ?? nameForDevice(id))
+                                    Text(nameForDevice(id))
                                         .font(.subheadline)
                                         .foregroundStyle(Theme.textPrimary)
-                                    if let fw = dev?.fwInfo {
-                                        Text("FW \(fw.major).\(fw.minor)")
+                                    // Main VESC FW version shown for CAN ID 0
+                                    if id == 0, let fw = boardManager.mainFWInfo {
+                                        Text("FW \(fw.versionString)")
                                             .font(.caption)
                                             .foregroundStyle(Theme.textTertiary)
                                     }
                                 }
                                 Spacer()
-                                if dev?.fwInfo != nil {
-                                    Image(systemName: "checkmark.circle.fill")
-                                        .foregroundStyle(Theme.success)
-                                } else {
-                                    ProgressView()
-                                        .scaleEffect(0.7)
-                                }
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Theme.success)
                             }
                         }
                     }
