@@ -136,9 +136,6 @@ static void test_ffi_packet() {
     ASSERT_EQ(out_len, 3u, "ffi decoded payload size");
     ASSERT_EQ(decoded[0], 0x04, "ffi decoded content");
     ASSERT_EQ(consumed, pkt_len, "ffi consumed all");
-
-    nd_free(decoded);
-    nd_free(pkt);
 }
 
 // --- Profile loading ---
@@ -376,8 +373,6 @@ static void test_ffi_decoder() {
     ASSERT_EQ(out_len, 1u, "ffi decoder pop len");
     ASSERT_EQ(result[0], 0x04, "ffi decoder pop content");
 
-    nd_free(result);
-    nd_free(pkt);
     nd_decoder_destroy(d);
 }
 

@@ -24,8 +24,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isFinishing) {
-            engine.destroy()
-        }
+        // Engine is application-scoped — let process death handle cleanup.
+        // Calling engine.destroy() here breaks re-creation after config changes.
     }
 }

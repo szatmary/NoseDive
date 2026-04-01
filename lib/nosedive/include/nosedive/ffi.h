@@ -162,10 +162,11 @@ void nd_engine_set_active_profile_id(nd_engine_t* e, const char* profile_id);
 
 uint16_t nd_crc16(const uint8_t* data, size_t len);
 
+// Returned pointers are borrowed from internal storage (valid until the next
+// call to the same function on the same thread).  Do not free them.
 uint8_t* nd_encode_packet(const uint8_t* payload, size_t payload_len, size_t* out_len);
 uint8_t* nd_decode_packet(const uint8_t* data, size_t data_len,
                           size_t* out_len, size_t* consumed);
-void nd_free(void* ptr);
 
 // Packet decoder (push-based, for BLE chunk reassembly)
 typedef struct nd_decoder nd_decoder_t;

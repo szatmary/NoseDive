@@ -16,6 +16,7 @@ extern "C" {
 JNIEXPORT void JNICALL
 Java_com_nosedive_app_engine_NoseDiveEngine_nativeInit(JNIEnv* env, jobject, jstring storagePath) {
     const char* path = env->GetStringUTFChars(storagePath, nullptr);
+    if (!path) return; // OOM
     g_engine = nd_engine_create(path);
     env->ReleaseStringUTFChars(storagePath, path);
     env->GetJavaVM(&g_jvm);
@@ -44,6 +45,7 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeHandlePayload(JNIEnv* env, job
     if (!g_engine) return;
     jsize len = env->GetArrayLength(data);
     jbyte* bytes = env->GetByteArrayElements(data, nullptr);
+    if (!bytes) return; // OOM
     nd_engine_handle_payload(g_engine, reinterpret_cast<const uint8_t*>(bytes), len);
     env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
 }
@@ -90,6 +92,7 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetTelemetry(JNIEnv* env, jobj
     if (g_engine) nd_engine_get_telemetry(g_engine, &t);
 
     jdoubleArray arr = env->NewDoubleArray(13);
+    if (!arr) return nullptr; // OOM
     jdouble vals[] = {
         t.temp_mosfet, t.temp_motor, t.motor_current, t.battery_current,
         t.duty_cycle, t.erpm, t.battery_voltage, t.battery_percent,

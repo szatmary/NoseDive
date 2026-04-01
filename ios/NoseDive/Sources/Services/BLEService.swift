@@ -29,54 +29,66 @@ class BLEService: NSObject {
 
     private let eventHandler: (Event) -> Void
     private var packetBuffer = Data()
+    private let bleQueue = DispatchQueue(label: "com.nosedive.ble", qos: .userInitiated)
 
     init(eventHandler: @escaping (Event) -> Void) {
         self.eventHandler = eventHandler
         super.init()
-        centralManager = CBCentralManager(delegate: self, queue: .global(qos: .userInitiated))
+        centralManager = CBCentralManager(delegate: self, queue: bleQueue)
     }
 
     func startScan() {
-        guard centralManager?.state == .poweredOn else { return }
-        centralManager?.scanForPeripherals(
-            withServices: [Self.vescServiceUUID],
-            options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
-        )
+        bleQueue.async { [weak self] in
+            guard let self, self.centralManager?.state == .poweredOn else { return }
+            self.centralManager?.scanForPeripherals(
+                withServices: [Self.vescServiceUUID],
+                options: [CBCentralManagerScanOptionAllowDuplicatesKey: false]
+            )
+        }
     }
 
     func stopScan() {
-        centralManager?.stopScan()
+        bleQueue.async { [weak self] in
+            self?.centralManager?.stopScan()
+        }
     }
 
     func connect(to identifier: String) {
-        guard let central = centralManager else { return }
-        let peripherals = central.retrievePeripherals(withIdentifiers: [UUID(uuidString: identifier)].compactMap { $0 })
-        guard let peripheral = peripherals.first else { return }
-        connectedPeripheral = peripheral
-        peripheral.delegate = self
-        central.connect(peripheral, options: nil)
+        bleQueue.async { [weak self] in
+            guard let self, let central = self.centralManager else { return }
+            let peripherals = central.retrievePeripherals(withIdentifiers: [UUID(uuidString: identifier)].compactMap { $0 })
+            guard let peripheral = peripherals.first else { return }
+            self.connectedPeripheral = peripheral
+            peripheral.delegate = self
+            central.connect(peripheral, options: nil)
+        }
     }
 
     func disconnect() {
-        if let p = connectedPeripheral {
-            centralManager?.cancelPeripheralConnection(p)
+        bleQueue.async { [weak self] in
+            guard let self else { return }
+            if let p = self.connectedPeripheral {
+                self.centralManager?.cancelPeripheralConnection(p)
+            }
+            self.connectedPeripheral = nil
+            self.txCharacteristic = nil
+            self.rxCharacteristic = nil
         }
-        connectedPeripheral = nil
-        txCharacteristic = nil
-        rxCharacteristic = nil
     }
 
     func send(_ data: Data) {
-        guard let peripheral = connectedPeripheral,
-              let tx = txCharacteristic else { return }
-        // Fragment into MTU-sized chunks
-        let mtu = peripheral.maximumWriteValueLength(for: .withoutResponse)
-        var offset = 0
-        while offset < data.count {
-            let end = min(offset + mtu, data.count)
-            let chunk = data[offset..<end]
-            peripheral.writeValue(Data(chunk), for: tx, type: .withoutResponse)
-            offset = end
+        bleQueue.async { [weak self] in
+            guard let self,
+                  let peripheral = self.connectedPeripheral,
+                  let tx = self.txCharacteristic else { return }
+            let mtu = max(peripheral.maximumWriteValueLength(for: .withoutResponse), 20)
+            var offset = 0
+            while offset < data.count {
+                let end = min(offset + mtu, data.count)
+                let chunk = data[offset..<end]
+                peripheral.writeValue(Data(chunk), for: tx, type: .withoutResponse)
+                offset = end
+            }
         }
     }
 }

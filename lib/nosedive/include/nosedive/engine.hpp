@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -31,8 +32,8 @@ public:
     explicit Engine(const std::string& storage_path);
 
     // --- Transport callbacks ---
-    void set_send_callback(SendCallback cb) { send_cb_ = std::move(cb); }
-    void set_state_callback(StateCallback cb) { state_cb_ = std::move(cb); }
+    void set_send_callback(SendCallback cb);
+    void set_state_callback(StateCallback cb);
 
     // --- Connection lifecycle ---
     void on_connected();
@@ -42,49 +43,50 @@ public:
     void handle_payload(const uint8_t* data, size_t len);
 
     // --- Telemetry state (read by GUI) ---
-    const Telemetry& telemetry() const { return telemetry_; }
-    double speed_kmh() const { return telemetry_.speed * 3.6; }
-    double speed_mph() const { return telemetry_.speed * 2.237; }
+    Telemetry telemetry() const;
+    double speed_kmh() const;
+    double speed_mph() const;
 
     // --- Active board ---
-    const Board* active_board() const { return active_board_ ? &*active_board_ : nullptr; }
+    std::optional<Board> active_board() const;
     bool is_known_board() const;
     const char* guessed_board_type() const;
 
     // --- CAN devices ---
-    const std::vector<uint8_t>& can_device_ids() const { return can_device_ids_; }
-    const std::vector<CANDevice>& can_devices() const { return can_devices_; }
+    std::vector<uint8_t> can_device_ids() const;
+    std::vector<CANDevice> can_devices() const;
 
     // --- FW info ---
-    const FWVersion* main_fw() const { return main_fw_ ? &*main_fw_ : nullptr; }
+    std::optional<FWVersion> main_fw() const;
 
     // --- Refloat ---
     bool has_refloat() const;
-    const RefloatInfo* refloat_info() const { return refloat_info_ ? &*refloat_info_ : nullptr; }
-    bool refloat_installing() const { return refloat_installing_; }
-    bool refloat_installed() const { return refloat_installed_; }
+    std::optional<RefloatInfo> refloat_info() const;
+    bool refloat_installing() const;
+    bool refloat_installed() const;
     void install_refloat();
 
     // --- Wizard ---
-    bool should_show_wizard() const { return show_wizard_; }
-    void dismiss_wizard() { show_wizard_ = false; }
+    bool should_show_wizard() const;
+    void dismiss_wizard();
 
     // --- Board CRUD (delegates to storage) ---
-    const std::vector<Board>& boards() const { return storage_.boards(); }
+    std::vector<Board> boards() const;
     void save_board(const Board& board);
     void remove_board(std::string_view id);
 
     // --- Profile CRUD (delegates to storage) ---
-    const std::vector<RiderProfile>& profiles() const { return storage_.profiles(); }
+    std::vector<RiderProfile> profiles() const;
     void save_profile(const RiderProfile& profile);
     void remove_profile(std::string_view id);
-    const std::string& active_profile_id() const { return storage_.active_profile_id(); }
+    std::string active_profile_id() const;
     void set_active_profile_id(const std::string& id);
 
     // --- Storage ---
     Storage& storage() { return storage_; }
 
 private:
+    mutable std::mutex mu_;
     Storage storage_;
     SendCallback send_cb_;
     StateCallback state_cb_;
@@ -111,7 +113,7 @@ private:
     // Board type guess result (cached)
     mutable std::string guessed_type_cache_;
 
-    // --- Internal handlers ---
+    // --- Internal handlers (called with mu_ held) ---
     void handle_values(const uint8_t* data, size_t len);
     void handle_fw_version(const uint8_t* data, size_t len);
     void handle_ping_can(const uint8_t* data, size_t len);
@@ -121,6 +123,7 @@ private:
     void query_next_can_device();
     void send_payload(const std::vector<uint8_t>& payload);
     void notify_state_changed();
+    bool is_known_board_locked() const; // mu_ already held
 };
 
 } // namespace nosedive

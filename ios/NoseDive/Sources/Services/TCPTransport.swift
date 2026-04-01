@@ -23,7 +23,7 @@ class TCPTransport {
     /// Connect to a VESC/simulator at host:port.
     func connect(host: String, port: UInt16) {
         let nwHost = NWEndpoint.Host(host)
-        let nwPort = NWEndpoint.Port(rawValue: port)!
+        guard let nwPort = NWEndpoint.Port(rawValue: port) else { return }
         let conn = NWConnection(host: nwHost, port: nwPort, using: .tcp)
         connection = conn
 
@@ -100,12 +100,16 @@ class TCPTransport {
 
     /// Start periodic telemetry polling at the given interval.
     func startPolling(interval: TimeInterval = 0.1) {
-        polling = true
-        poll(interval: interval)
+        queue.async { [weak self] in
+            self?.polling = true
+            self?.poll(interval: interval)
+        }
     }
 
     func stopPolling() {
-        polling = false
+        queue.async { [weak self] in
+            self?.polling = false
+        }
     }
 
     private func poll(interval: TimeInterval) {

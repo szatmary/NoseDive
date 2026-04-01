@@ -131,10 +131,12 @@ void Buffer::append_string(const std::string& s) {
 }
 
 uint8_t Buffer::read_uint8() {
+    if (read_pos_ >= data_.size()) { read_pos_ = data_.size(); return 0; }
     return data_[read_pos_++];
 }
 
 int16_t Buffer::read_int16() {
+    if (read_pos_ + 2 > data_.size()) { read_pos_ = data_.size(); return 0; }
     int16_t v = static_cast<int16_t>(
         (static_cast<uint16_t>(data_[read_pos_]) << 8) | data_[read_pos_ + 1]);
     read_pos_ += 2;
@@ -142,12 +144,14 @@ int16_t Buffer::read_int16() {
 }
 
 uint16_t Buffer::read_uint16() {
+    if (read_pos_ + 2 > data_.size()) { read_pos_ = data_.size(); return 0; }
     uint16_t v = (static_cast<uint16_t>(data_[read_pos_]) << 8) | data_[read_pos_ + 1];
     read_pos_ += 2;
     return v;
 }
 
 int32_t Buffer::read_int32() {
+    if (read_pos_ + 4 > data_.size()) { read_pos_ = data_.size(); return 0; }
     uint32_t u = (static_cast<uint32_t>(data_[read_pos_]) << 24) |
                  (static_cast<uint32_t>(data_[read_pos_ + 1]) << 16) |
                  (static_cast<uint32_t>(data_[read_pos_ + 2]) << 8) |
@@ -157,6 +161,7 @@ int32_t Buffer::read_int32() {
 }
 
 uint32_t Buffer::read_uint32() {
+    if (read_pos_ + 4 > data_.size()) { read_pos_ = data_.size(); return 0; }
     uint32_t v = (static_cast<uint32_t>(data_[read_pos_]) << 24) |
                  (static_cast<uint32_t>(data_[read_pos_ + 1]) << 16) |
                  (static_cast<uint32_t>(data_[read_pos_ + 2]) << 8) |
