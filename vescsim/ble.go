@@ -143,11 +143,12 @@ func (s *Simulator) StartBLE(name string) error {
 	if s.bleName == "" {
 		s.bleName = "VESC SIM"
 	}
+	localName := s.bleName // snapshot for use outside lock
 	s.mu.Unlock()
 
 	bleSim = s
 
-	cName := C.CString(s.bleName)
+	cName := C.CString(localName)
 	defer C.free(unsafe.Pointer(cName))
 	cService := C.CString(vescServiceUUIDStr)
 	defer C.free(unsafe.Pointer(cService))
@@ -161,7 +162,7 @@ func (s *Simulator) StartBLE(name string) error {
 	for i := 0; i < 50; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if C.bleIsReady() != 0 {
-			log.Printf("simulator: BLE advertising as %q", s.bleName)
+			log.Printf("simulator: BLE advertising as %q", localName)
 			return nil
 		}
 	}

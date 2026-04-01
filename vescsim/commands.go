@@ -147,7 +147,7 @@ func (s *Simulator) buildGetIMUDataResponse(payload []byte) []byte {
 	resp := []byte{byte(CommGetIMUData)}
 
 	mask := uint16(0xFFFF)
-	if len(payload) > 1 {
+	if len(payload) > 2 {
 		mask = uint16(payload[1])<<8 | uint16(payload[2])
 	}
 

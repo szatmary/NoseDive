@@ -815,9 +815,9 @@ func (s *Simulator) buildRefloatAllDataResponse(mode uint8) []byte {
 
 func (s *Simulator) buildRefloatLightsControlResponse(data []byte) []byte {
 	resp := []byte{byte(CommCustomAppData), PackageMagic, byte(CommandLightsControl)}
-	// Parse incoming control if present
-	if len(data) >= 1 {
-		ctrl := data[0]
+	// Parse incoming control byte: data = [magic][cmd][ctrl_byte...]
+	if len(data) >= 3 {
+		ctrl := data[2]
 		s.state.LCMTaillightOn = ctrl&0x01 != 0
 		s.state.LCMHeadlightOn = ctrl&0x02 != 0
 	}
