@@ -14,6 +14,7 @@ import androidx.compose.ui.unit.sp
 import com.nosedive.app.ble.BLEService
 import com.nosedive.app.ble.DiscoveredDevice
 import com.nosedive.app.engine.NoseDiveEngine
+import com.nosedive.app.engine.RefloatInfo
 import com.nosedive.app.engine.Telemetry
 
 /**
@@ -219,6 +220,8 @@ fun TelemetryRow(label: String, value: String) {
 
 @Composable
 fun SetupWizardScreen(engine: NoseDiveEngine) {
+    val refloatInfo by engine.refloatInfo.collectAsState()
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -242,7 +245,12 @@ fun SetupWizardScreen(engine: NoseDiveEngine) {
                 Text("Install Refloat")
             }
         } else {
-            Text("Refloat is installed")
+            val ri = refloatInfo
+            if (ri != null) {
+                Text("${ri.name} ${ri.versionString}", fontWeight = FontWeight.Medium)
+            } else {
+                Text("Refloat is installed")
+            }
         }
 
         Spacer(modifier = Modifier.height(32.dp))

@@ -42,6 +42,9 @@ class NoseDiveEngine private constructor(context: Context) {
     private val _showWizard = MutableStateFlow(false)
     val showWizard: StateFlow<Boolean> = _showWizard.asStateFlow()
 
+    private val _refloatInfo = MutableStateFlow<RefloatInfo?>(null)
+    val refloatInfo: StateFlow<RefloatInfo?> = _refloatInfo.asStateFlow()
+
     // BLE service reference for sending data
     var bleService: com.nosedive.app.ble.BLEService? = null
 
@@ -95,6 +98,20 @@ class NoseDiveEngine private constructor(context: Context) {
         _hasActiveBoard.value = nativeHasActiveBoard()
         _showWizard.value = nativeShouldShowWizard()
 
+        // Refloat info
+        val ri = nativeGetRefloatInfo()
+        _refloatInfo.value = if (ri != null && ri.size == 5) {
+            RefloatInfo(
+                name = ri[0],
+                major = ri[1].toIntOrNull() ?: 0,
+                minor = ri[2].toIntOrNull() ?: 0,
+                patch = ri[3].toIntOrNull() ?: 0,
+                suffix = ri[4]
+            )
+        } else {
+            null
+        }
+
         // Update telemetry from flat array
         val raw = nativeGetTelemetry()
         if (raw.size >= 13) {
@@ -129,6 +146,7 @@ class NoseDiveEngine private constructor(context: Context) {
     private external fun nativeSpeedKmh(): Double
     private external fun nativeSpeedMph(): Double
     private external fun nativeGetTelemetry(): DoubleArray
+    private external fun nativeGetRefloatInfo(): Array<String>?
     private external fun nativeBoardCount(): Int
     private external fun nativeProfileCount(): Int
 }

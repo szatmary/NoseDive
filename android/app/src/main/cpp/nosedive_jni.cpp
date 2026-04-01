@@ -163,7 +163,7 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeSpeedMph(JNIEnv*, jobject) {
 JNIEXPORT jdoubleArray JNICALL
 Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetTelemetry(JNIEnv* env, jobject) {
     nd_telemetry_t t = {};
-    if (g_engine) nd_engine_get_telemetry(g_engine, &t);
+    if (g_engine) t = nd_engine_get_telemetry(g_engine);
 
     jdoubleArray arr = env->NewDoubleArray(13);
     if (!arr) return nullptr; // OOM
@@ -175,6 +175,30 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetTelemetry(JNIEnv* env, jobj
         static_cast<double>(t.fault)
     };
     env->SetDoubleArrayRegion(arr, 0, 13, vals);
+    return arr;
+}
+
+// Refloat info — returns [name, major, minor, patch, suffix] or null if no refloat
+JNIEXPORT jobjectArray JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetRefloatInfo(JNIEnv* env, jobject) {
+    if (!g_engine || !nd_engine_has_refloat(g_engine)) return nullptr;
+    nd_refloat_info_t ri = nd_engine_get_refloat_info(g_engine);
+
+    jclass strClass = env->FindClass("java/lang/String");
+    jobjectArray arr = env->NewObjectArray(5, strClass, nullptr);
+    if (!arr) return nullptr;
+
+    env->SetObjectArrayElement(arr, 0, env->NewStringUTF(ri.name));
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%d", ri.major);
+    env->SetObjectArrayElement(arr, 1, env->NewStringUTF(buf));
+    snprintf(buf, sizeof(buf), "%d", ri.minor);
+    env->SetObjectArrayElement(arr, 2, env->NewStringUTF(buf));
+    snprintf(buf, sizeof(buf), "%d", ri.patch);
+    env->SetObjectArrayElement(arr, 3, env->NewStringUTF(buf));
+    env->SetObjectArrayElement(arr, 4, env->NewStringUTF(ri.suffix));
+
+    env->DeleteLocalRef(strClass);
     return arr;
 }
 
