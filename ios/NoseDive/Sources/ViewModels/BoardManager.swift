@@ -21,6 +21,7 @@ class BoardManager: ObservableObject {
     @Published var boards: [Board] = []
     @Published var canDevices: [UInt8] = []
     @Published var showWizard = false
+    @Published var refloatInfo: RefloatInfo?
     @Published var refloatInstalling = false
     @Published var refloatInstalled = false
 
@@ -108,6 +109,18 @@ class BoardManager: ObservableObject {
         showWizard = nd_engine_should_show_wizard(engine)
 
         // Refloat
+        if nd_engine_has_refloat(engine) {
+            let ri = nd_engine_get_refloat_info(engine)
+            refloatInfo = RefloatInfo(
+                name: String(cString: ri.name),
+                major: ri.major,
+                minor: ri.minor,
+                patch: ri.patch,
+                suffix: String(cString: ri.suffix)
+            )
+        } else {
+            refloatInfo = nil
+        }
         refloatInstalling = nd_engine_refloat_installing(engine)
         refloatInstalled = nd_engine_refloat_installed(engine)
 

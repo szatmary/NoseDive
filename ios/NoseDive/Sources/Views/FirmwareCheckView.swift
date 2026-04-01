@@ -296,7 +296,7 @@ struct FirmwareCheckView: View {
             (fw.major == Self.latestVESCFW.major && fw.minor >= Self.latestVESCFW.minor)
     }
 
-    private func isRefloatUpToDate(_ info: VESCPacket.RefloatInfo) -> Bool {
+    private func isRefloatUpToDate(_ info: RefloatInfo) -> Bool {
         if info.major > Self.latestRefloat.major { return true }
         if info.major < Self.latestRefloat.major { return false }
         if info.minor > Self.latestRefloat.minor { return true }

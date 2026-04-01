@@ -21,6 +21,21 @@ struct BoardTelemetry {
     var fault: UInt8 = 0
 }
 
+/// Refloat package info (from C++ engine via nd_refloat_info_t)
+struct RefloatInfo {
+    var name: String = ""
+    var major: UInt8 = 0
+    var minor: UInt8 = 0
+    var patch: UInt8 = 0
+    var suffix: String = ""
+
+    var versionString: String {
+        var s = "\(major).\(minor).\(patch)"
+        if !suffix.isEmpty { s += "-\(suffix)" }
+        return s
+    }
+}
+
 /// Refloat-specific telemetry
 struct RefloatState {
     var runState: RunState = .disabled
