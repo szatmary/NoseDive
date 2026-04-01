@@ -337,60 +337,7 @@ void nd_engine_set_active_profile_id(nd_engine_t* e, const char* profile_id) {
     e->engine.set_active_profile_id(profile_id ? profile_id : "");
 }
 
-// --- Low-level packet framing ---
-// Returned pointers are borrowed from thread-local storage and valid until the
-// next call to the same function on the same thread.  nd_free is a no-op.
-
-uint16_t nd_crc16(const uint8_t* data, size_t len) {
-    return nosedive::crc16(data, len);
-}
-
-uint8_t* nd_encode_packet(const uint8_t* payload, size_t payload_len, size_t* out_len) {
-    static thread_local std::vector<uint8_t> result;
-    result = nosedive::encode_packet(payload, payload_len);
-    if (result.empty()) { *out_len = 0; return nullptr; }
-    *out_len = result.size();
-    return result.data();
-}
-
-uint8_t* nd_decode_packet(const uint8_t* data, size_t data_len,
-                          size_t* out_len, size_t* consumed) {
-    static thread_local std::vector<uint8_t> result;
-    auto decoded = nosedive::decode_packet(data, data_len);
-    if (!decoded) { *out_len = 0; *consumed = 0; return nullptr; }
-    result = std::move(decoded->payload);
-    *out_len = result.size();
-    *consumed = decoded->bytes_consumed;
-    return result.data();
-}
-
-
-// --- Packet decoder ---
-
-struct nd_decoder {
-    nosedive::PacketDecoder decoder;
-    std::vector<uint8_t> last_pop; // owns data returned by nd_decoder_pop
-};
-
-nd_decoder_t* nd_decoder_create(void) { return std::make_unique<nd_decoder>().release(); }
-void nd_decoder_destroy(nd_decoder_t* d) { std::unique_ptr<nd_decoder> p(d); }
-
-int nd_decoder_feed(nd_decoder_t* d, const uint8_t* data, size_t len) {
-    d->decoder.feed(data, len);
-    return static_cast<int>(d->decoder.packet_count());
-}
-
-uint8_t* nd_decoder_pop(nd_decoder_t* d, size_t* out_len) {
-    d->last_pop = d->decoder.pop();
-    if (d->last_pop.empty()) { *out_len = 0; return nullptr; }
-    *out_len = d->last_pop.size();
-    return d->last_pop.data();
-}
-
-size_t nd_decoder_count(const nd_decoder_t* d) { return d->decoder.packet_count(); }
-void nd_decoder_reset(nd_decoder_t* d) { d->decoder.reset(); }
-
-// --- BLE Transport ---
+// --- Transport ---
 
 struct nd_transport {
     nosedive::BLETransport transport;

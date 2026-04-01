@@ -135,6 +135,14 @@ const (
 	CommGetStats                     CommPacketID = 128
 	CommResetStats                   CommPacketID = 129
 	CommGetGNSS                      CommPacketID = 150
+	CommQmluiErase                   CommPacketID = 120
+	CommQmluiWrite                   CommPacketID = 121
+	CommLispWriteCode                CommPacketID = 131
+	CommLispEraseCode                CommPacketID = 132
+	CommLispSetRunning               CommPacketID = 133
+	CommLispGetStats                 CommPacketID = 134
+	CommLispReplCmd                  CommPacketID = 138
+	CommLispStreamCode               CommPacketID = 139
 	CommShutdown                     CommPacketID = 156
 	CommFWInfo                       CommPacketID = 157
 	CommMotorEStop                   CommPacketID = 159

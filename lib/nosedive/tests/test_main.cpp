@@ -30,8 +30,7 @@ static void test_crc16() {
     ASSERT(crc != 0, "crc16 non-zero for non-empty input");
     ASSERT_EQ(nosedive::crc16(data, 1), crc, "crc16 deterministic");
 
-    // Verify C FFI matches
-    ASSERT_EQ(nd_crc16(data, 1), crc, "nd_crc16 matches C++ crc16");
+    // (nd_crc16 removed from FFI — internal only)
 }
 
 // --- Packet encode/decode round-trip ---
@@ -122,21 +121,7 @@ static void test_buffer_string() {
     ASSERT(reader.read_string() == "world", "string round-trip 2");
 }
 
-// --- FFI packet round-trip ---
-static void test_ffi_packet() {
-    uint8_t payload[] = {0x04, 0x01, 0x02};
-    size_t pkt_len = 0;
-    uint8_t* pkt = nd_encode_packet(payload, 3, &pkt_len);
-    ASSERT(pkt != nullptr, "nd_encode_packet non-null");
-    ASSERT(pkt_len > 3, "nd_encode_packet adds framing");
-
-    size_t out_len = 0, consumed = 0;
-    uint8_t* decoded = nd_decode_packet(pkt, pkt_len, &out_len, &consumed);
-    ASSERT(decoded != nullptr, "nd_decode_packet non-null");
-    ASSERT_EQ(out_len, 3u, "ffi decoded payload size");
-    ASSERT_EQ(decoded[0], 0x04, "ffi decoded content");
-    ASSERT_EQ(consumed, pkt_len, "ffi consumed all");
-}
+// (test_ffi_packet removed — nd_encode/decode_packet removed from FFI)
 
 // --- Profile loading ---
 static void test_profile_load() {
@@ -355,26 +340,7 @@ static void test_ble_transport() {
     ASSERT_EQ(received[0][0], 0x04, "received payload content");
 }
 
-static void test_ffi_decoder() {
-    nd_decoder_t* d = nd_decoder_create();
-    ASSERT(d != nullptr, "decoder create non-null");
-
-    uint8_t payload[] = {0x04};
-    size_t pkt_len = 0;
-    uint8_t* pkt = nd_encode_packet(payload, 1, &pkt_len);
-
-    int count = nd_decoder_feed(d, pkt, pkt_len);
-    ASSERT_EQ(count, 1, "ffi decoder feed returns 1");
-    ASSERT_EQ(nd_decoder_count(d), 1u, "ffi decoder count");
-
-    size_t out_len = 0;
-    uint8_t* result = nd_decoder_pop(d, &out_len);
-    ASSERT(result != nullptr, "ffi decoder pop non-null");
-    ASSERT_EQ(out_len, 1u, "ffi decoder pop len");
-    ASSERT_EQ(result[0], 0x04, "ffi decoder pop content");
-
-    nd_decoder_destroy(d);
-}
+// (test_ffi_decoder removed — nd_decoder_* removed from FFI)
 
 static void test_ffi_transport() {
     nd_transport_t* t = nd_transport_create(20);
@@ -745,7 +711,6 @@ int main() {
     test_buffer_float16();
     test_buffer_float32_auto();
     test_buffer_string();
-    test_ffi_packet();
     test_profile_load();
     test_packet_decoder_single();
     test_packet_decoder_chunked();
@@ -753,7 +718,6 @@ int main() {
     test_refloat_command_builders();
     test_refloat_compat_decoders();
     test_ble_transport();
-    test_ffi_decoder();
     test_ffi_transport();
     test_parse_fw_version();
     test_parse_ping_can();

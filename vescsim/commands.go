@@ -133,9 +133,9 @@ func (s *Simulator) buildGetValuesSetupResponse() []byte {
 }
 
 // buildPingCANResponse builds COMM_PING_CAN response.
-// Returns all device IDs on the CAN bus: ourselves plus every CAN device.
+// Returns CAN device IDs only — the local controller is implicit.
 func (s *Simulator) buildPingCANResponse() []byte {
-	resp := []byte{byte(CommPingCAN), s.state.ControllerID}
+	resp := []byte{byte(CommPingCAN)}
 	for _, dev := range s.canDevices {
 		resp = append(resp, dev.ID())
 	}

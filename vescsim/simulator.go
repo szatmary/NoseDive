@@ -120,6 +120,10 @@ type BoardState struct {
 	MCConf     []byte // Motor controller config blob
 	AppConf    []byte // App config blob
 
+	// Package install buffers (accumulated during write chunks)
+	qmlWriteBuf  []byte
+	lispWriteBuf []byte
+
 	// LCM (LED Controller Module)
 	LCMPresent       bool
 	LCMLedType       uint8  // 0=none, 1=RGB, 2=RGBW
@@ -559,6 +563,77 @@ func (s *Simulator) handleCommandLocked(payload []byte) []byte {
 			s.state.PkgSuffix = "sim"
 		}
 		return []byte{byte(CommWriteNewAppData)}
+	case CommQmluiErase:
+		log.Printf("simulator: erase QML")
+		s.state.qmlWriteBuf = nil
+		return []byte{byte(cmd), 1}
+	case CommLispEraseCode:
+		log.Printf("simulator: erase Lisp")
+		s.state.lispWriteBuf = nil
+		return []byte{byte(cmd), 1}
+	case CommQmluiWrite:
+		offset := int32(0)
+		if len(payload) >= 5 {
+			idx := 1
+			offset = GetInt32(payload, &idx)
+			data := payload[5:]
+			// Grow buffer to fit
+			end := int(offset) + len(data)
+			for len(s.state.qmlWriteBuf) < end {
+				s.state.qmlWriteBuf = append(s.state.qmlWriteBuf, 0)
+			}
+			copy(s.state.qmlWriteBuf[offset:], data)
+		}
+		resp := []byte{byte(cmd), 1}
+		resp = AppendInt32(resp, offset)
+		log.Printf("simulator: write QML offset=%d len=%d total=%d", offset, len(payload)-5, len(s.state.qmlWriteBuf))
+		return resp
+	case CommLispWriteCode:
+		offset := int32(0)
+		if len(payload) >= 5 {
+			idx := 1
+			offset = GetInt32(payload, &idx)
+			data := payload[5:]
+			end := int(offset) + len(data)
+			for len(s.state.lispWriteBuf) < end {
+				s.state.lispWriteBuf = append(s.state.lispWriteBuf, 0)
+			}
+			copy(s.state.lispWriteBuf[offset:], data)
+		}
+		resp := []byte{byte(cmd), 1}
+		resp = AppendInt32(resp, offset)
+		log.Printf("simulator: write Lisp offset=%d len=%d total=%d", offset, len(payload)-5, len(s.state.lispWriteBuf))
+		return resp
+	case CommLispSetRunning:
+		running := false
+		if len(payload) > 1 {
+			running = payload[1] != 0
+		}
+		log.Printf("simulator: Lisp set running=%v (qml=%d bytes, lisp=%d bytes)",
+			running, len(s.state.qmlWriteBuf), len(s.state.lispWriteBuf))
+		if running {
+			s.state.HasRefloat = true
+			s.state.PkgName = "Refloat"
+			s.state.PkgMajor = 2
+			s.state.PkgMinor = 0
+			s.state.PkgPatch = 1
+			s.state.PkgSuffix = "sim"
+			// Validate CRC of written data
+			if len(s.state.lispWriteBuf) > 0 {
+				crc := CRC16(s.state.lispWriteBuf)
+				log.Printf("simulator: Refloat installed — Lisp CRC=0x%04X, QML=%d bytes", crc, len(s.state.qmlWriteBuf))
+			}
+		}
+		return []byte{byte(CommLispSetRunning), 1} // 1 = ok
+	case CommLispGetStats:
+		// Return minimal Lisp stats
+		resp := []byte{byte(CommLispGetStats)}
+		resp = AppendFloat32Auto(resp, 0)    // cpu_use
+		resp = AppendFloat32Auto(resp, 4096) // heap_use
+		resp = AppendFloat32Auto(resp, 8192) // mem_use
+		return resp
+	case CommLispReplCmd, CommLispStreamCode:
+		return nil // accept silently
 	case CommSetBLEName, CommSetBLEPin, CommSetCANMode:
 		return nil // accept silently
 	case CommGetIMUCalibration:

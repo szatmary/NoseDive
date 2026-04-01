@@ -18,6 +18,7 @@ func main() {
 	profilePath := flag.String("profile", "", "Board profile JSON file")
 	dataPath := flag.String("data", "vescsim_state.json", "Path to save/load simulator state")
 	fresh := flag.Bool("fresh", false, "Start as unconfigured board (new UUID, default configs, no saved state)")
+	noRefloat := flag.Bool("no-refloat", false, "Start without Refloat installed")
 	flag.Parse()
 
 	var sim *Simulator
@@ -43,9 +44,16 @@ func main() {
 		sim.SetUUID(uuid)
 		sim.SetFootpad(FootpadNone)
 		sim.SetRunState(StateReady)
+		sim.SetHasRefloat(false)
 		os.Remove(*dataPath)
 		fmt.Printf("Fresh board mode — UUID: %x\n", uuid)
-	} else {
+	}
+
+	if *noRefloat {
+		sim.SetHasRefloat(false)
+	}
+
+	if !*fresh {
 		// Load saved state if it exists
 		if err := sim.LoadState(*dataPath); err == nil {
 			fmt.Printf("Loaded saved state from %s\n", *dataPath)

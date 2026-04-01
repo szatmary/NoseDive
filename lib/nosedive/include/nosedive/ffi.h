@@ -162,26 +162,7 @@ void nd_engine_remove_profile(nd_engine_t* e, const char* id);
 const char* nd_engine_active_profile_id(const nd_engine_t* e);
 void nd_engine_set_active_profile_id(nd_engine_t* e, const char* profile_id);
 
-// --- Low-level (still useful for BLE transport layer) ---
-
-uint16_t nd_crc16(const uint8_t* data, size_t len);
-
-// Returned pointers are borrowed from internal storage (valid until the next
-// call to the same function on the same thread).  Do not free them.
-uint8_t* nd_encode_packet(const uint8_t* payload, size_t payload_len, size_t* out_len);
-uint8_t* nd_decode_packet(const uint8_t* data, size_t data_len,
-                          size_t* out_len, size_t* consumed);
-
-// Packet decoder (push-based, for BLE chunk reassembly)
-typedef struct nd_decoder nd_decoder_t;
-nd_decoder_t* nd_decoder_create(void);
-void nd_decoder_destroy(nd_decoder_t* d);
-int nd_decoder_feed(nd_decoder_t* d, const uint8_t* data, size_t len);
-uint8_t* nd_decoder_pop(nd_decoder_t* d, size_t* out_len);
-size_t nd_decoder_count(const nd_decoder_t* d);
-void nd_decoder_reset(nd_decoder_t* d);
-
-// BLE transport (handles VESC framing + MTU chunking)
+// --- Transport (VESC packet framing + MTU chunking for BLE/TCP) ---
 typedef struct nd_transport nd_transport_t;
 typedef void (*nd_send_callback_t)(const uint8_t* data, size_t len, void* ctx);
 typedef void (*nd_packet_callback_t)(const uint8_t* payload, size_t len, void* ctx);
