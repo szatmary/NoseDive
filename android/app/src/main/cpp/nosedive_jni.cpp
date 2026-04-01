@@ -16,39 +16,48 @@ static nd_engine_t* g_engine = nullptr;
 static JavaVM* g_jvm = nullptr;
 static jobject g_callback_obj = nullptr;
 
+// Helper: attach to JVM if needed, returns env. Sets attached=true if caller must detach.
+static JNIEnv* get_env(bool& attached) {
+    attached = false;
+    if (!g_jvm || !g_callback_obj) return nullptr;
+    JNIEnv* env = nullptr;
+    if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_OK) return env;
+    if (g_jvm->AttachCurrentThread(&env, nullptr) != JNI_OK) return nullptr;
+    attached = true;
+    return env;
+}
+
 // Helper: call a void no-arg Kotlin method on g_callback_obj from any thread.
 static void call_kotlin_void(const char* method_name) {
-    if (!g_jvm || !g_callback_obj) return;
-    JNIEnv* env;
-    bool attached = false;
-    if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        g_jvm->AttachCurrentThread(&env, nullptr);
-        attached = true;
-    }
+    bool attached;
+    JNIEnv* env = get_env(attached);
+    if (!env) return;
     jclass cls = env->GetObjectClass(g_callback_obj);
     jmethodID mid = env->GetMethodID(cls, method_name, "()V");
-    if (mid) env->CallVoidMethod(g_callback_obj, mid);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); mid = nullptr; }
+    if (mid) {
+        env->CallVoidMethod(g_callback_obj, mid);
+        if (env->ExceptionCheck()) env->ExceptionClear();
+    }
     env->DeleteLocalRef(cls);
     if (attached) g_jvm->DetachCurrentThread();
 }
 
 // Helper: call a Kotlin method that takes a byte[] on g_callback_obj from any thread.
 static void call_kotlin_bytes(const char* method_name, const uint8_t* data, size_t len) {
-    if (!g_jvm || !g_callback_obj) return;
-    JNIEnv* env;
-    bool attached = false;
-    if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
-        g_jvm->AttachCurrentThread(&env, nullptr);
-        attached = true;
-    }
+    bool attached;
+    JNIEnv* env = get_env(attached);
+    if (!env) return;
     jclass cls = env->GetObjectClass(g_callback_obj);
     jmethodID mid = env->GetMethodID(cls, method_name, "([B)V");
+    if (env->ExceptionCheck()) { env->ExceptionClear(); mid = nullptr; }
     if (mid) {
         jbyteArray arr = env->NewByteArray(static_cast<jsize>(len));
         if (arr) {
             env->SetByteArrayRegion(arr, 0, static_cast<jsize>(len),
                                     reinterpret_cast<const jbyte*>(data));
             env->CallVoidMethod(g_callback_obj, mid, arr);
+            if (env->ExceptionCheck()) env->ExceptionClear();
             env->DeleteLocalRef(arr);
         }
     }

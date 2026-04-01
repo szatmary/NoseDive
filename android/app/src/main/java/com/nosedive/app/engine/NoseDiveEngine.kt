@@ -42,10 +42,6 @@ class NoseDiveEngine private constructor(context: Context) {
     private val _showWizard = MutableStateFlow(false)
     val showWizard: StateFlow<Boolean> = _showWizard.asStateFlow()
 
-    // Pending send payload — BLE service reads this to transmit
-    private val _pendingSendPayload = MutableStateFlow<ByteArray?>(null)
-    val pendingSendPayload: StateFlow<ByteArray?> = _pendingSendPayload.asStateFlow()
-
     // BLE service reference for sending data
     var bleService: com.nosedive.app.ble.BLEService? = null
 
@@ -92,7 +88,6 @@ class NoseDiveEngine private constructor(context: Context) {
      */
     fun onEngineSendPayload(data: ByteArray) {
         Log.d(TAG, "Engine send payload: ${data.size} bytes")
-        _pendingSendPayload.value = data
         bleService?.send(data)
     }
 
