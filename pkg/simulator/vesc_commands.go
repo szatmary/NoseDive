@@ -34,8 +34,12 @@ func (s *Simulator) buildFWVersionResponse() []byte {
 	// HW type (1 byte) - 0 = VESC
 	resp = append(resp, byte(vesc.HWTypeVESC))
 
-	// Custom config num (1 byte) - 1 = Refloat has 1 custom config
-	resp = append(resp, 1)
+	// Custom config num (1 byte) - 1 if Refloat is installed
+	if s.state.HasRefloat {
+		resp = append(resp, 1)
+	} else {
+		resp = append(resp, 0)
+	}
 
 	// Has phase filters (1 byte) - 0 = no
 	resp = append(resp, 0)
@@ -49,8 +53,10 @@ func (s *Simulator) buildFWVersionResponse() []byte {
 	// NRF flags (1 byte) - bit0=nameSupported, bit1=pinSupported
 	resp = append(resp, 0)
 
-	// FW name (null-terminated) - "Refloat" package name
-	resp = append(resp, []byte("Refloat")...)
+	// FW name (null-terminated) - package name if installed
+	if s.state.HasRefloat {
+		resp = append(resp, []byte(s.state.PkgName)...)
+	}
 	resp = append(resp, 0)
 
 	// HW config CRC (4 bytes) - used for caching

@@ -53,6 +53,8 @@ class BoardManager: ObservableObject {
 
     // Wizard
     @Published var showWizard = false
+    @Published var refloatInstalling = false
+    @Published var refloatInstalled = false
 
     // Transport
     private var bleService: BLEService?
@@ -273,6 +275,13 @@ class BoardManager: ObservableObject {
                 }
             }
 
+        case VESCPacket.CommPacketID.writeNewAppData.rawValue:
+            // Refloat install complete — re-query FW version and Refloat info
+            refloatInstalling = false
+            refloatInstalled = true
+            tcpTransport?.requestFWVersion()
+            tcpTransport?.requestRefloatInfo()
+
         default:
             break
         }
@@ -323,6 +332,24 @@ class BoardManager: ObservableObject {
             if !isKnownBoard {
                 showWizard = true
             }
+        }
+    }
+
+    // MARK: - Refloat Install
+
+    /// Whether the main VESC has Refloat installed (customConfigCount > 0).
+    var hasRefloat: Bool {
+        (deviceFWInfo[0]?.fwInfo?.customConfigCount ?? 0) > 0
+    }
+
+    /// Trigger Refloat install: erase → write (simulator handles this atomically).
+    func installRefloat() {
+        refloatInstalling = true
+        refloatInstalled = false
+        tcpTransport?.eraseNewApp()
+        // Small delay then write — simulator processes erase synchronously
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.tcpTransport?.writeNewAppData()
         }
     }
 

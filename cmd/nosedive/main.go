@@ -24,6 +24,7 @@ func main() {
 	webAddr := flag.String("web-addr", "127.0.0.1:8080", "Web GUI listen address")
 	profilePath := flag.String("profile", "", "Board profile JSON file")
 	bleName := flag.String("ble-name", "VESC SIM", "BLE device name for simulator")
+	noRefloat := flag.Bool("no-refloat", false, "Start simulator without Refloat installed")
 	bleScan := flag.Bool("ble-scan", false, "Scan for VESC BLE devices")
 	bleAddr := flag.String("ble", "", "Connect to VESC via BLE address")
 	flag.Parse()
@@ -59,6 +60,9 @@ func main() {
 			fmt.Printf("Loaded profile: %s\n", p.Name)
 		} else {
 			simInstance = simulator.New()
+		}
+		if *noRefloat {
+			simInstance.SetHasRefloat(false)
 		}
 		if err := simInstance.Start(*simAddr); err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to start simulator: %v\n", err)

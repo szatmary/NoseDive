@@ -86,6 +86,16 @@ class TCPTransport {
         send(Data([VESCPacket.CommPacketID.fwVersion.rawValue]))
     }
 
+    /// Send COMM_ERASE_NEW_APP to erase the custom app slot.
+    func eraseNewApp() {
+        send(Data([VESCPacket.CommPacketID.eraseNewApp.rawValue]))
+    }
+
+    /// Send COMM_WRITE_NEW_APP_DATA to install the custom app.
+    func writeNewAppData() {
+        send(Data([VESCPacket.CommPacketID.writeNewAppData.rawValue, 0x00]))
+    }
+
     // MARK: - Polling
 
     /// Start periodic telemetry polling at the given interval.

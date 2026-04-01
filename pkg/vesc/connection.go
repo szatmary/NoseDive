@@ -92,7 +92,17 @@ func (c *Connection) GetFWVersion() (*FWVersion, error) {
 		if idx+12 <= len(resp) {
 			fw.UUID = make([]byte, 12)
 			copy(fw.UUID, resp[idx:idx+12])
+			idx += 12
 		}
+		if idx < len(resp) { idx++ } // isPaired
+		if idx < len(resp) { idx++ } // fwTestVersion
+		if idx < len(resp) { fw.HWType = HWType(resp[idx]); idx++ }
+		if idx < len(resp) { fw.CustomConfigNum = resp[idx]; idx++ }
+		if idx < len(resp) { idx++ } // hasPhaseFilters
+		if idx < len(resp) { idx++ } // qmlHW
+		if idx < len(resp) { idx++ } // qmlApp
+		if idx < len(resp) { idx++ } // nrfFlags
+		if idx < len(resp) { fw.PackageName = GetString(resp, &idx) }
 	}
 	return fw, nil
 }

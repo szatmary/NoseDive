@@ -202,3 +202,75 @@ func TestCANForwardUnknownDevice(t *testing.T) {
 		t.Errorf("ForwardCAN to unknown device should return nil, got %d bytes", len(resp))
 	}
 }
+
+func TestRefloatInstallFlow(t *testing.T) {
+	sim := New()
+	if err := sim.Start("127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+	defer sim.Stop()
+
+	conn, err := vesc.DialTCP(sim.Addr())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+
+	client := refloat.NewClient(conn)
+
+	// Verify Refloat is installed by default
+	info, err := client.GetInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Name != "Refloat" {
+		t.Fatalf("expected Refloat installed, got %q", info.Name)
+	}
+
+	// Disable Refloat
+	sim.SetHasRefloat(false)
+
+	// FW version should now report customConfigCount=0
+	fw, err := client.GetFWVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fw.CustomConfigNum != 0 {
+		t.Errorf("customConfigNum = %d after disabling Refloat, want 0", fw.CustomConfigNum)
+	}
+
+	// Refloat info query should return nil (no response)
+	resp := sim.HandleCommand([]byte{byte(vesc.CommCustomAppData), refloat.PackageMagic, byte(refloat.CommandInfo)})
+	if resp != nil {
+		t.Errorf("Refloat info should return nil when not installed, got %d bytes", len(resp))
+	}
+
+	// Simulate installing Refloat via COMM_ERASE_NEW_APP + COMM_WRITE_NEW_APP_DATA
+	eraseResp := sim.HandleCommand([]byte{byte(vesc.CommEraseNewApp)})
+	if eraseResp == nil || eraseResp[0] != byte(vesc.CommEraseNewApp) {
+		t.Fatal("COMM_ERASE_NEW_APP should return ack")
+	}
+
+	writeResp := sim.HandleCommand([]byte{byte(vesc.CommWriteNewAppData), 0x00}) // dummy data
+	if writeResp == nil || writeResp[0] != byte(vesc.CommWriteNewAppData) {
+		t.Fatal("COMM_WRITE_NEW_APP_DATA should return ack")
+	}
+
+	// Now FW version should report customConfigCount=1
+	fw, err = client.GetFWVersion()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fw.CustomConfigNum != 1 {
+		t.Errorf("customConfigNum = %d after installing Refloat, want 1", fw.CustomConfigNum)
+	}
+
+	// Refloat info should work again
+	info, err = client.GetInfo()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Name != "Refloat" {
+		t.Errorf("package name = %q after install, want Refloat", info.Name)
+	}
+}

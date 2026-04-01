@@ -99,11 +99,12 @@ type BoardState struct {
 	BatteryVoltageMax  float64
 
 	// Refloat package info
-	PkgName   string
-	PkgMajor  uint8
-	PkgMinor  uint8
-	PkgPatch  uint8
-	PkgSuffix string
+	HasRefloat bool   // Whether Refloat is installed
+	PkgName    string
+	PkgMajor   uint8
+	PkgMinor   uint8
+	PkgPatch   uint8
+	PkgSuffix  string
 
 	// Motor detection results (populated from profile or defaults)
 	MotorResistance  float64 // ohms
@@ -144,6 +145,7 @@ func DefaultBoardState() *BoardState {
 		Roll:         0.0,
 		ADC1:         0.0,
 		ADC2:         0.0,
+		HasRefloat:   true,
 		PkgName:      "Refloat",
 		PkgMajor:     2,
 		PkgMinor:     0,
@@ -234,6 +236,20 @@ func NewWithProfile(p *board.Profile) *Simulator {
 // Profile returns the loaded board profile, if any.
 func (s *Simulator) Profile() *board.Profile {
 	return s.profile
+}
+
+// SetHasRefloat toggles whether Refloat is installed on the simulated board.
+func (s *Simulator) SetHasRefloat(installed bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.state.HasRefloat = installed
+	if !installed {
+		s.state.PkgName = ""
+		s.state.PkgMajor = 0
+		s.state.PkgMinor = 0
+		s.state.PkgPatch = 0
+		s.state.PkgSuffix = ""
+	}
 }
 
 // Start begins listening on the given address.
@@ -488,6 +504,24 @@ func (s *Simulator) handleCommandLocked(payload []byte) []byte {
 			return nil
 		}
 		return s.handleCustomAppData(payload[1:])
+	case vesc.CommEraseNewApp:
+		// Simulate erasing custom app (Refloat)
+		log.Printf("simulator: erasing custom app")
+		s.state.HasRefloat = false
+		return []byte{byte(vesc.CommEraseNewApp)}
+	case vesc.CommWriteNewAppData:
+		// Simulate writing new custom app data — after all chunks, Refloat is installed
+		// In real VESC, this receives chunks of firmware binary. We simulate completion immediately.
+		if !s.state.HasRefloat {
+			log.Printf("simulator: installing Refloat package")
+			s.state.HasRefloat = true
+			s.state.PkgName = "Refloat"
+			s.state.PkgMajor = 2
+			s.state.PkgMinor = 0
+			s.state.PkgPatch = 1
+			s.state.PkgSuffix = "sim"
+		}
+		return []byte{byte(vesc.CommWriteNewAppData)}
 	case vesc.CommSetBLEName, vesc.CommSetBLEPin, vesc.CommSetCANMode:
 		return nil // accept silently
 	case vesc.CommGetIMUCalibration:
@@ -505,6 +539,10 @@ func (s *Simulator) handleCommandLocked(payload []byte) []byte {
 
 func (s *Simulator) handleCustomAppData(data []byte) []byte {
 	if len(data) < 2 || data[0] != refloat.PackageMagic {
+		return nil
+	}
+	// No response if Refloat is not installed
+	if !s.state.HasRefloat {
 		return nil
 	}
 

@@ -50,7 +50,7 @@ struct FirmwareCheckView: View {
             Text("Firmware Check")
                 .font(.title3.bold())
                 .foregroundStyle(Theme.textPrimary)
-            Text("Checking firmware versions for all devices.\nUpdate order: Express → VESC → BMS")
+            Text("Checking firmware versions for all devices.")
                 .font(.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
@@ -249,7 +249,7 @@ struct FirmwareCheckView: View {
                 .foregroundStyle(Theme.textSecondary)
 
             Button {
-                // TODO: Refloat install flow
+                boardManager.installRefloat()
             } label: {
                 Text("Install Refloat")
                     .font(.caption.bold())

@@ -157,8 +157,11 @@ type Values struct {
 
 // FWVersion represents firmware version info.
 type FWVersion struct {
-	Major    uint8
-	Minor    uint8
-	HWName   string
-	UUID     []byte
+	Major          uint8
+	Minor          uint8
+	HWName         string
+	UUID           []byte
+	HWType         HWType
+	CustomConfigNum uint8
+	PackageName    string
 }

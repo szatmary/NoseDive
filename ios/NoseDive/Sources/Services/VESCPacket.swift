@@ -97,6 +97,8 @@ enum VESCPacket {
 
     enum CommPacketID: UInt8 {
         case fwVersion = 0
+        case eraseNewApp = 2
+        case writeNewAppData = 3
         case getValues = 4
         case forwardCAN = 34
         case customAppData = 36
