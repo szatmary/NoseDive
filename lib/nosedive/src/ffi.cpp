@@ -5,302 +5,12 @@
 #include "nosedive/profile.hpp"
 #include "nosedive/refloat.hpp"
 #include "nosedive/ble_transport.hpp"
-#include "nosedive/storage.hpp"
+#include "nosedive/engine.hpp"
 #include <cstdlib>
 #include <cstring>
 #include <algorithm>
 
-// Opaque wrapper
-struct nd_profile {
-    nosedive::Profile profile;
-};
-
-extern "C" {
-
-uint16_t nd_crc16(const uint8_t* data, size_t len) {
-    return nosedive::crc16(data, len);
-}
-
-uint8_t* nd_encode_packet(const uint8_t* payload, size_t payload_len, size_t* out_len) {
-    auto pkt = nosedive::encode_packet(payload, payload_len);
-    if (pkt.empty()) {
-        *out_len = 0;
-        return nullptr;
-    }
-    *out_len = pkt.size();
-    auto* buf = static_cast<uint8_t*>(std::malloc(pkt.size()));
-    std::memcpy(buf, pkt.data(), pkt.size());
-    return buf;
-}
-
-uint8_t* nd_decode_packet(const uint8_t* data, size_t data_len,
-                          size_t* out_len, size_t* consumed) {
-    auto result = nosedive::decode_packet(data, data_len);
-    if (!result) {
-        *out_len = 0;
-        *consumed = 0;
-        return nullptr;
-    }
-    *out_len = result->payload.size();
-    *consumed = result->bytes_consumed;
-    auto* buf = static_cast<uint8_t*>(std::malloc(result->payload.size()));
-    std::memcpy(buf, result->payload.data(), result->payload.size());
-    return buf;
-}
-
-void nd_free(void* ptr) {
-    std::free(ptr);
-}
-
-bool nd_parse_values(const uint8_t* data, size_t len, nd_values_t* out) {
-    auto vals = nosedive::parse_values(data, len);
-    if (!vals) return false;
-    out->temp_mosfet       = vals->temp_mosfet;
-    out->temp_motor        = vals->temp_motor;
-    out->avg_motor_current = vals->avg_motor_current;
-    out->avg_input_current = vals->avg_input_current;
-    out->duty_cycle        = vals->duty_cycle;
-    out->rpm               = vals->rpm;
-    out->voltage           = vals->voltage;
-    out->amp_hours         = vals->amp_hours;
-    out->amp_hours_charged = vals->amp_hours_charged;
-    out->watt_hours        = vals->watt_hours;
-    out->watt_hours_charged = vals->watt_hours_charged;
-    out->tachometer        = vals->tachometer;
-    out->tachometer_abs    = vals->tachometer_abs;
-    out->fault             = static_cast<uint8_t>(vals->fault);
-    return true;
-}
-
-nd_profile_t* nd_profile_load(const char* json, size_t json_len) {
-    auto p = nosedive::load_profile(std::string(json, json_len));
-    if (!p) return nullptr;
-    auto* handle = new nd_profile{std::move(*p)};
-    return handle;
-}
-
-nd_profile_t* nd_profile_load_file(const char* path) {
-    auto p = nosedive::load_profile_file(path);
-    if (!p) return nullptr;
-    auto* handle = new nd_profile{std::move(*p)};
-    return handle;
-}
-
-void nd_profile_free(nd_profile_t* p) {
-    delete p;
-}
-
-const char* nd_profile_name(const nd_profile_t* p) { return p->profile.name.c_str(); }
-const char* nd_profile_manufacturer(const nd_profile_t* p) { return p->profile.manufacturer.c_str(); }
-const char* nd_profile_model(const nd_profile_t* p) { return p->profile.model.c_str(); }
-
-int nd_profile_motor_pole_pairs(const nd_profile_t* p) { return p->profile.motor.pole_pairs; }
-double nd_profile_motor_resistance(const nd_profile_t* p) { return p->profile.motor.resistance; }
-double nd_profile_motor_inductance(const nd_profile_t* p) { return p->profile.motor.inductance; }
-double nd_profile_motor_flux_linkage(const nd_profile_t* p) { return p->profile.motor.flux_linkage; }
-
-double nd_profile_battery_voltage_min(const nd_profile_t* p) { return p->profile.battery.voltage_min; }
-double nd_profile_battery_voltage_max(const nd_profile_t* p) { return p->profile.battery.voltage_max; }
-double nd_profile_battery_voltage_nominal(const nd_profile_t* p) { return p->profile.battery.voltage_nominal; }
-double nd_profile_battery_capacity_wh(const nd_profile_t* p) { return p->profile.battery.capacity_wh; }
-int nd_profile_battery_series_cells(const nd_profile_t* p) { return p->profile.battery.series_cells; }
-int nd_profile_battery_parallel_cells(const nd_profile_t* p) { return p->profile.battery.parallel_cells; }
-
-double nd_profile_erpm_per_mps(const nd_profile_t* p) { return p->profile.erpm_per_mps(); }
-double nd_profile_speed_from_erpm(const nd_profile_t* p, double erpm) { return p->profile.speed_from_erpm(erpm); }
-double nd_profile_battery_percentage(const nd_profile_t* p, double voltage) { return p->profile.battery_percentage(voltage); }
-
-// --- Packet decoder ---
-
-struct nd_decoder {
-    nosedive::PacketDecoder decoder;
-};
-
-nd_decoder_t* nd_decoder_create(void) {
-    return new nd_decoder{};
-}
-
-void nd_decoder_destroy(nd_decoder_t* d) {
-    delete d;
-}
-
-int nd_decoder_feed(nd_decoder_t* d, const uint8_t* data, size_t len) {
-    d->decoder.feed(data, len);
-    return static_cast<int>(d->decoder.packet_count());
-}
-
-uint8_t* nd_decoder_pop(nd_decoder_t* d, size_t* out_len) {
-    auto pkt = d->decoder.pop();
-    if (pkt.empty()) {
-        *out_len = 0;
-        return nullptr;
-    }
-    *out_len = pkt.size();
-    auto* buf = static_cast<uint8_t*>(std::malloc(pkt.size()));
-    std::memcpy(buf, pkt.data(), pkt.size());
-    return buf;
-}
-
-size_t nd_decoder_count(const nd_decoder_t* d) {
-    return d->decoder.packet_count();
-}
-
-void nd_decoder_reset(nd_decoder_t* d) {
-    d->decoder.reset();
-}
-
-// --- Refloat ---
-
-static void rtdata_to_c(const nosedive::refloat::RTData& rt, nd_refloat_rtdata_t* out) {
-    out->run_state      = static_cast<uint8_t>(rt.state.run_state);
-    out->mode           = static_cast<uint8_t>(rt.state.mode);
-    out->sat            = static_cast<uint8_t>(rt.state.sat);
-    out->stop           = static_cast<uint8_t>(rt.state.stop);
-    out->footpad        = static_cast<uint8_t>(rt.state.footpad);
-    out->speed          = rt.speed;
-    out->erpm           = rt.erpm;
-    out->motor_current  = rt.motor_current;
-    out->dir_current    = rt.dir_current;
-    out->filt_current   = rt.filt_current;
-    out->duty_cycle     = rt.duty_cycle;
-    out->batt_voltage   = rt.batt_voltage;
-    out->batt_current   = rt.batt_current;
-    out->mosfet_temp    = rt.mosfet_temp;
-    out->motor_temp     = rt.motor_temp;
-    out->pitch          = rt.pitch;
-    out->balance_pitch  = rt.balance_pitch;
-    out->roll           = rt.roll;
-    out->adc1           = rt.adc1;
-    out->adc2           = rt.adc2;
-    out->remote_input   = rt.remote_input;
-    out->setpoint       = rt.setpoint;
-    out->atr_setpoint   = rt.atr_setpoint;
-    out->brake_tilt_setpoint  = rt.brake_tilt_setpoint;
-    out->torque_tilt_setpoint = rt.torque_tilt_setpoint;
-    out->turn_tilt_setpoint   = rt.turn_tilt_setpoint;
-    out->remote_setpoint      = rt.remote_setpoint;
-    out->balance_current      = rt.balance_current;
-    out->atr_accel_diff       = rt.atr_accel_diff;
-    out->atr_speed_boost      = rt.atr_speed_boost;
-    out->booster_current      = rt.booster_current;
-}
-
-bool nd_refloat_parse_all_data(const uint8_t* data, size_t len, uint8_t mode,
-                                nd_refloat_rtdata_t* out) {
-    auto rt = nosedive::refloat::parse_all_data(data, len, mode);
-    if (!rt) return false;
-    rtdata_to_c(*rt, out);
-    return true;
-}
-
-bool nd_refloat_parse_rt_data(const uint8_t* data, size_t len,
-                               nd_refloat_rtdata_t* out) {
-    auto rt = nosedive::refloat::parse_rt_data(data, len);
-    if (!rt) return false;
-    rtdata_to_c(*rt, out);
-    return true;
-}
-
-bool nd_refloat_parse_info(const uint8_t* data, size_t len, nd_refloat_info_t* out) {
-    auto info = nosedive::refloat::parse_info(data, len);
-    if (!info) return false;
-    std::memset(out, 0, sizeof(*out));
-    std::strncpy(out->name, info->name.c_str(), sizeof(out->name) - 1);
-    out->major = info->major;
-    out->minor = info->minor;
-    out->patch = info->patch;
-    std::strncpy(out->suffix, info->suffix.c_str(), sizeof(out->suffix) - 1);
-    return true;
-}
-
-static uint8_t* vec_to_malloc(const std::vector<uint8_t>& v, size_t* out_len) {
-    *out_len = v.size();
-    auto* buf = static_cast<uint8_t*>(std::malloc(v.size()));
-    std::memcpy(buf, v.data(), v.size());
-    return buf;
-}
-
-uint8_t* nd_refloat_build_get_all_data(uint8_t mode, size_t* out_len) {
-    auto cmd = nosedive::refloat::build_get_all_data(mode);
-    return vec_to_malloc(cmd, out_len);
-}
-
-uint8_t* nd_refloat_build_get_rt_data(size_t* out_len) {
-    auto cmd = nosedive::refloat::build_get_rt_data();
-    return vec_to_malloc(cmd, out_len);
-}
-
-uint8_t* nd_refloat_build_info_request(size_t* out_len) {
-    auto cmd = nosedive::refloat::build_info_request();
-    return vec_to_malloc(cmd, out_len);
-}
-
-// --- BLE Transport ---
-
-struct nd_transport {
-    nosedive::BLETransport transport;
-    nd_send_callback_t send_cb = nullptr;
-    nd_packet_callback_t packet_cb = nullptr;
-    void* send_ctx = nullptr;
-    void* packet_ctx = nullptr;
-
-    nd_transport(size_t mtu) : transport(mtu) {}
-};
-
-nd_transport_t* nd_transport_create(size_t mtu) {
-    auto* t = new nd_transport(mtu);
-    return t;
-}
-
-void nd_transport_destroy(nd_transport_t* t) {
-    delete t;
-}
-
-void nd_transport_set_send_callback(nd_transport_t* t, nd_send_callback_t cb, void* ctx) {
-    t->send_cb = cb;
-    t->send_ctx = ctx;
-    t->transport.set_send_callback([t](const uint8_t* data, size_t len) {
-        if (t->send_cb) t->send_cb(data, len, t->send_ctx);
-    });
-}
-
-void nd_transport_set_packet_callback(nd_transport_t* t, nd_packet_callback_t cb, void* ctx) {
-    t->packet_cb = cb;
-    t->packet_ctx = ctx;
-    t->transport.set_packet_callback([t](const uint8_t* payload, size_t len) {
-        if (t->packet_cb) t->packet_cb(payload, len, t->packet_ctx);
-    });
-}
-
-void nd_transport_set_mtu(nd_transport_t* t, size_t mtu) {
-    t->transport.set_mtu(mtu);
-}
-
-void nd_transport_receive(nd_transport_t* t, const uint8_t* data, size_t len) {
-    t->transport.on_ble_receive(data, len);
-}
-
-bool nd_transport_send_payload(nd_transport_t* t, const uint8_t* payload, size_t len) {
-    return t->transport.send_payload(payload, len);
-}
-
-bool nd_transport_send_command(nd_transport_t* t, uint8_t cmd) {
-    return t->transport.send_command(cmd);
-}
-
-bool nd_transport_send_custom_app_data(nd_transport_t* t, const uint8_t* data, size_t len) {
-    return t->transport.send_custom_app_data(data, len);
-}
-
-void nd_transport_reset(nd_transport_t* t) {
-    t->transport.reset();
-}
-
-// --- Storage ---
-
-struct nd_app_data {
-    nosedive::AppData data;
-};
+// --- Helpers ---
 
 static void copy_str(char* dst, size_t dst_size, const std::string& src) {
     size_t n = std::min(src.size(), dst_size - 1);
@@ -390,77 +100,316 @@ static nosedive::RiderProfile profile_from_c(const nd_rider_profile_t* p) {
     return out;
 }
 
-nd_app_data_t* nd_app_data_load(const char* path) {
-    auto* handle = new nd_app_data{nosedive::app_data_load(path)};
-    return handle;
+// --- Engine opaque wrapper ---
+
+struct nd_engine {
+    nosedive::Engine engine;
+    nd_engine_send_cb send_cb = nullptr;
+    void* send_ctx = nullptr;
+    nd_engine_state_cb state_cb = nullptr;
+    void* state_ctx = nullptr;
+
+    explicit nd_engine(const char* path) : engine(path) {}
+};
+
+extern "C" {
+
+// --- Engine lifecycle ---
+
+nd_engine_t* nd_engine_create(const char* storage_path) {
+    auto* e = new nd_engine(storage_path);
+    return e;
 }
 
-bool nd_app_data_save(const nd_app_data_t* data, const char* path) {
-    return nosedive::app_data_save(data->data, path);
+void nd_engine_destroy(nd_engine_t* e) {
+    delete e;
 }
 
-nd_app_data_t* nd_app_data_create(void) {
-    return new nd_app_data{};
+void nd_engine_set_send_callback(nd_engine_t* e, nd_engine_send_cb cb, void* ctx) {
+    e->send_cb = cb;
+    e->send_ctx = ctx;
+    e->engine.set_send_callback([e](const uint8_t* data, size_t len) {
+        if (e->send_cb) e->send_cb(data, len, e->send_ctx);
+    });
 }
 
-void nd_app_data_free(nd_app_data_t* data) {
-    delete data;
+void nd_engine_set_state_callback(nd_engine_t* e, nd_engine_state_cb cb, void* ctx) {
+    e->state_cb = cb;
+    e->state_ctx = ctx;
+    e->engine.set_state_callback([e]() {
+        if (e->state_cb) e->state_cb(e->state_ctx);
+    });
 }
 
-size_t nd_app_data_board_count(const nd_app_data_t* data) {
-    return data->data.boards.size();
+void nd_engine_on_connected(nd_engine_t* e) {
+    e->engine.on_connected();
 }
 
-bool nd_app_data_get_board(const nd_app_data_t* data, size_t index, nd_board_t* out) {
-    if (index >= data->data.boards.size()) return false;
-    board_to_c(data->data.boards[index], out);
+void nd_engine_on_disconnected(nd_engine_t* e) {
+    e->engine.on_disconnected();
+}
+
+void nd_engine_handle_payload(nd_engine_t* e, const uint8_t* data, size_t len) {
+    e->engine.handle_payload(data, len);
+}
+
+// --- Telemetry ---
+
+void nd_engine_get_telemetry(const nd_engine_t* e, nd_telemetry_t* out) {
+    const auto& t = e->engine.telemetry();
+    out->temp_mosfet     = t.temp_mosfet;
+    out->temp_motor      = t.temp_motor;
+    out->motor_current   = t.motor_current;
+    out->battery_current = t.battery_current;
+    out->duty_cycle      = t.duty_cycle;
+    out->erpm            = t.erpm;
+    out->battery_voltage = t.battery_voltage;
+    out->battery_percent = t.battery_percent;
+    out->speed           = t.speed;
+    out->power           = t.power;
+    out->tachometer      = t.tachometer;
+    out->tachometer_abs  = t.tachometer_abs;
+    out->fault           = static_cast<uint8_t>(t.fault);
+}
+
+double nd_engine_speed_kmh(const nd_engine_t* e) {
+    return e->engine.speed_kmh();
+}
+
+double nd_engine_speed_mph(const nd_engine_t* e) {
+    return e->engine.speed_mph();
+}
+
+// --- Active board ---
+
+bool nd_engine_has_active_board(const nd_engine_t* e) {
+    return e->engine.active_board() != nullptr;
+}
+
+bool nd_engine_get_active_board(const nd_engine_t* e, nd_board_t* out) {
+    auto* b = e->engine.active_board();
+    if (!b) return false;
+    board_to_c(*b, out);
     return true;
 }
 
-void nd_app_data_set_board(nd_app_data_t* data, size_t index, const nd_board_t* board) {
-    if (index >= data->data.boards.size()) return;
-    data->data.boards[index] = board_from_c(board);
+bool nd_engine_is_known_board(const nd_engine_t* e) {
+    return e->engine.is_known_board();
 }
 
-void nd_app_data_add_board(nd_app_data_t* data, const nd_board_t* board) {
-    data->data.boards.push_back(board_from_c(board));
+const char* nd_engine_guessed_board_type(const nd_engine_t* e) {
+    return e->engine.guessed_board_type();
 }
 
-void nd_app_data_remove_board(nd_app_data_t* data, size_t index) {
-    if (index >= data->data.boards.size()) return;
-    data->data.boards.erase(data->data.boards.begin() + static_cast<ptrdiff_t>(index));
+// --- CAN devices ---
+
+size_t nd_engine_can_device_count(const nd_engine_t* e) {
+    return e->engine.can_device_ids().size();
 }
 
-size_t nd_app_data_profile_count(const nd_app_data_t* data) {
-    return data->data.rider_profiles.size();
+uint8_t nd_engine_can_device_id(const nd_engine_t* e, size_t index) {
+    const auto& ids = e->engine.can_device_ids();
+    return index < ids.size() ? ids[index] : 0;
 }
 
-bool nd_app_data_get_profile(const nd_app_data_t* data, size_t index, nd_rider_profile_t* out) {
-    if (index >= data->data.rider_profiles.size()) return false;
-    profile_to_c(data->data.rider_profiles[index], out);
+// --- Firmware info ---
+
+bool nd_engine_get_main_fw(const nd_engine_t* e, nd_fw_version_t* out) {
+    auto* fw = e->engine.main_fw();
+    if (!fw) return false;
+    std::memset(out, 0, sizeof(*out));
+    out->major = fw->major;
+    out->minor = fw->minor;
+    copy_str(out->hw_name, sizeof(out->hw_name), fw->hw_name);
+    copy_str(out->uuid, sizeof(out->uuid), fw->uuid);
+    out->hw_type = static_cast<uint8_t>(fw->hw_type);
+    out->custom_config_count = fw->custom_config_count;
+    copy_str(out->package_name, sizeof(out->package_name), fw->package_name);
     return true;
 }
 
-void nd_app_data_set_profile(nd_app_data_t* data, size_t index, const nd_rider_profile_t* profile) {
-    if (index >= data->data.rider_profiles.size()) return;
-    data->data.rider_profiles[index] = profile_from_c(profile);
+// --- Refloat ---
+
+bool nd_engine_has_refloat(const nd_engine_t* e) {
+    return e->engine.has_refloat();
 }
 
-void nd_app_data_add_profile(nd_app_data_t* data, const nd_rider_profile_t* profile) {
-    data->data.rider_profiles.push_back(profile_from_c(profile));
+bool nd_engine_get_refloat_info(const nd_engine_t* e, nd_refloat_info_t* out) {
+    auto* info = e->engine.refloat_info();
+    if (!info) return false;
+    std::memset(out, 0, sizeof(*out));
+    copy_str(out->name, sizeof(out->name), info->name);
+    out->major = info->major;
+    out->minor = info->minor;
+    out->patch = info->patch;
+    copy_str(out->suffix, sizeof(out->suffix), info->suffix);
+    return true;
 }
 
-void nd_app_data_remove_profile(nd_app_data_t* data, size_t index) {
-    if (index >= data->data.rider_profiles.size()) return;
-    data->data.rider_profiles.erase(data->data.rider_profiles.begin() + static_cast<ptrdiff_t>(index));
+bool nd_engine_refloat_installing(const nd_engine_t* e) {
+    return e->engine.refloat_installing();
 }
 
-const char* nd_app_data_active_profile_id(const nd_app_data_t* data) {
-    return data->data.active_profile_id.c_str();
+bool nd_engine_refloat_installed(const nd_engine_t* e) {
+    return e->engine.refloat_installed();
 }
 
-void nd_app_data_set_active_profile_id(nd_app_data_t* data, const char* profile_id) {
-    data->data.active_profile_id = profile_id ? profile_id : "";
+void nd_engine_install_refloat(nd_engine_t* e) {
+    e->engine.install_refloat();
 }
+
+// --- Wizard ---
+
+bool nd_engine_should_show_wizard(const nd_engine_t* e) {
+    return e->engine.should_show_wizard();
+}
+
+void nd_engine_dismiss_wizard(nd_engine_t* e) {
+    e->engine.dismiss_wizard();
+}
+
+// --- Board fleet ---
+
+size_t nd_engine_board_count(const nd_engine_t* e) {
+    return e->engine.boards().size();
+}
+
+bool nd_engine_get_board(const nd_engine_t* e, size_t index, nd_board_t* out) {
+    const auto& boards = e->engine.boards();
+    if (index >= boards.size()) return false;
+    board_to_c(boards[index], out);
+    return true;
+}
+
+void nd_engine_save_board(nd_engine_t* e, const nd_board_t* board) {
+    e->engine.save_board(board_from_c(board));
+}
+
+void nd_engine_remove_board(nd_engine_t* e, const char* id) {
+    e->engine.remove_board(id);
+}
+
+// --- Rider profiles ---
+
+size_t nd_engine_profile_count(const nd_engine_t* e) {
+    return e->engine.profiles().size();
+}
+
+bool nd_engine_get_profile(const nd_engine_t* e, size_t index, nd_rider_profile_t* out) {
+    const auto& profiles = e->engine.profiles();
+    if (index >= profiles.size()) return false;
+    profile_to_c(profiles[index], out);
+    return true;
+}
+
+void nd_engine_save_profile(nd_engine_t* e, const nd_rider_profile_t* profile) {
+    e->engine.save_profile(profile_from_c(profile));
+}
+
+void nd_engine_remove_profile(nd_engine_t* e, const char* id) {
+    e->engine.remove_profile(id);
+}
+
+const char* nd_engine_active_profile_id(const nd_engine_t* e) {
+    return e->engine.active_profile_id().c_str();
+}
+
+void nd_engine_set_active_profile_id(nd_engine_t* e, const char* profile_id) {
+    e->engine.set_active_profile_id(profile_id ? profile_id : "");
+}
+
+// --- Low-level packet framing ---
+
+uint16_t nd_crc16(const uint8_t* data, size_t len) {
+    return nosedive::crc16(data, len);
+}
+
+uint8_t* nd_encode_packet(const uint8_t* payload, size_t payload_len, size_t* out_len) {
+    auto pkt = nosedive::encode_packet(payload, payload_len);
+    if (pkt.empty()) { *out_len = 0; return nullptr; }
+    *out_len = pkt.size();
+    auto* buf = static_cast<uint8_t*>(std::malloc(pkt.size()));
+    std::memcpy(buf, pkt.data(), pkt.size());
+    return buf;
+}
+
+uint8_t* nd_decode_packet(const uint8_t* data, size_t data_len,
+                          size_t* out_len, size_t* consumed) {
+    auto result = nosedive::decode_packet(data, data_len);
+    if (!result) { *out_len = 0; *consumed = 0; return nullptr; }
+    *out_len = result->payload.size();
+    *consumed = result->bytes_consumed;
+    auto* buf = static_cast<uint8_t*>(std::malloc(result->payload.size()));
+    std::memcpy(buf, result->payload.data(), result->payload.size());
+    return buf;
+}
+
+void nd_free(void* ptr) {
+    std::free(ptr);
+}
+
+// --- Packet decoder ---
+
+struct nd_decoder {
+    nosedive::PacketDecoder decoder;
+};
+
+nd_decoder_t* nd_decoder_create(void) { return new nd_decoder{}; }
+void nd_decoder_destroy(nd_decoder_t* d) { delete d; }
+
+int nd_decoder_feed(nd_decoder_t* d, const uint8_t* data, size_t len) {
+    d->decoder.feed(data, len);
+    return static_cast<int>(d->decoder.packet_count());
+}
+
+uint8_t* nd_decoder_pop(nd_decoder_t* d, size_t* out_len) {
+    auto pkt = d->decoder.pop();
+    if (pkt.empty()) { *out_len = 0; return nullptr; }
+    *out_len = pkt.size();
+    auto* buf = static_cast<uint8_t*>(std::malloc(pkt.size()));
+    std::memcpy(buf, pkt.data(), pkt.size());
+    return buf;
+}
+
+size_t nd_decoder_count(const nd_decoder_t* d) { return d->decoder.packet_count(); }
+void nd_decoder_reset(nd_decoder_t* d) { d->decoder.reset(); }
+
+// --- BLE Transport ---
+
+struct nd_transport {
+    nosedive::BLETransport transport;
+    nd_send_callback_t send_cb = nullptr;
+    nd_packet_callback_t packet_cb = nullptr;
+    void* send_ctx = nullptr;
+    void* packet_ctx = nullptr;
+
+    nd_transport(size_t mtu) : transport(mtu) {}
+};
+
+nd_transport_t* nd_transport_create(size_t mtu) { return new nd_transport(mtu); }
+void nd_transport_destroy(nd_transport_t* t) { delete t; }
+
+void nd_transport_set_send_callback(nd_transport_t* t, nd_send_callback_t cb, void* ctx) {
+    t->send_cb = cb;
+    t->send_ctx = ctx;
+    t->transport.set_send_callback([t](const uint8_t* data, size_t len) {
+        if (t->send_cb) t->send_cb(data, len, t->send_ctx);
+    });
+}
+
+void nd_transport_set_packet_callback(nd_transport_t* t, nd_packet_callback_t cb, void* ctx) {
+    t->packet_cb = cb;
+    t->packet_ctx = ctx;
+    t->transport.set_packet_callback([t](const uint8_t* payload, size_t len) {
+        if (t->packet_cb) t->packet_cb(payload, len, t->packet_ctx);
+    });
+}
+
+void nd_transport_set_mtu(nd_transport_t* t, size_t mtu) { t->transport.set_mtu(mtu); }
+void nd_transport_receive(nd_transport_t* t, const uint8_t* data, size_t len) { t->transport.on_ble_receive(data, len); }
+bool nd_transport_send_payload(nd_transport_t* t, const uint8_t* payload, size_t len) { return t->transport.send_payload(payload, len); }
+bool nd_transport_send_command(nd_transport_t* t, uint8_t cmd) { return t->transport.send_command(cmd); }
+bool nd_transport_send_custom_app_data(nd_transport_t* t, const uint8_t* data, size_t len) { return t->transport.send_custom_app_data(data, len); }
+void nd_transport_reset(nd_transport_t* t) { t->transport.reset(); }
 
 } // extern "C"

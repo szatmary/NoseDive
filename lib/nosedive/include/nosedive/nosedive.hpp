@@ -8,3 +8,4 @@
 #include "nosedive/refloat.hpp"
 #include "nosedive/ble_transport.hpp"
 #include "nosedive/storage.hpp"
+#include "nosedive/engine.hpp"

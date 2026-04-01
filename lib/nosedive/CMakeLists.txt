@@ -13,6 +13,7 @@ set(NOSEDIVE_SOURCES
     src/refloat.cpp
     src/ble_transport.cpp
     src/storage.cpp
+    src/engine.cpp
 )
 
 # Static library

@@ -223,14 +223,6 @@ static void test_profile_load() {
     ASSERT_NEAR(profile->battery_percentage(84.0), 100.0, 0.01, "battery 100%");
     ASSERT_NEAR(profile->battery_percentage(60.0), 0.0, 0.01, "battery 0%");
 
-    // FFI profile
-    nd_profile_t* p = nd_profile_load(json, std::strlen(json));
-    ASSERT(p != nullptr, "nd_profile_load non-null");
-    ASSERT(std::strcmp(nd_profile_name(p), "Test Board") == 0, "ffi profile name");
-    ASSERT_EQ(nd_profile_motor_pole_pairs(p), 15, "ffi pole pairs");
-    ASSERT_NEAR(nd_profile_motor_resistance(p), 0.088, 1e-6, "ffi resistance");
-    ASSERT_NEAR(nd_profile_battery_percentage(p, 72.0), pct, 0.01, "ffi battery pct");
-    nd_profile_free(p);
 }
 
 // --- PacketDecoder tests ---
@@ -420,6 +412,141 @@ static void test_ffi_transport() {
 }
 
 // --- Storage C++ round-trip ---
+// --- FW version parsing ---
+static void test_parse_fw_version() {
+    // Build a realistic FW version payload:
+    // [cmd=0][major=6][minor=5][hw="TestHW"\0][uuid:12][isPaired=0][fwTest=0][hwType=0]
+    // [customConfigCount=1][hasPhaseFilters=0][qmlHW=0][qmlApp=0][nrfFlags=0][pkgName="Refloat"\0]
+    std::vector<uint8_t> payload;
+    payload.push_back(0x00); // cmd
+    payload.push_back(6);    // major
+    payload.push_back(5);    // minor
+    // hw name
+    for (char c : std::string("TestHW")) payload.push_back(c);
+    payload.push_back(0);
+    // uuid: 12 bytes
+    for (int i = 0; i < 12; i++) payload.push_back(0xA0 + i);
+    payload.push_back(0); // isPaired
+    payload.push_back(0); // fwTest
+    payload.push_back(0); // hwType = VESC
+    payload.push_back(1); // customConfigCount
+    payload.push_back(0); // hasPhaseFilters
+    payload.push_back(0); // qmlHW
+    payload.push_back(0); // qmlApp
+    payload.push_back(0); // nrfFlags
+    for (char c : std::string("Refloat")) payload.push_back(c);
+    payload.push_back(0);
+
+    auto fw = nosedive::parse_fw_version(payload.data(), payload.size());
+    ASSERT(fw.has_value(), "parse_fw_version: success");
+    ASSERT_EQ(fw->major, 6, "parse_fw_version: major");
+    ASSERT_EQ(fw->minor, 5, "parse_fw_version: minor");
+    ASSERT_EQ(fw->hw_name, "TestHW", "parse_fw_version: hw_name");
+    ASSERT_EQ(fw->uuid.size(), 24u, "parse_fw_version: uuid length");
+    ASSERT_EQ(fw->hw_type, nosedive::HWType::VESC, "parse_fw_version: hw_type");
+    ASSERT_EQ(fw->custom_config_count, 1, "parse_fw_version: custom_config_count");
+    ASSERT_EQ(fw->package_name, "Refloat", "parse_fw_version: package_name");
+
+    // Express: hwType=3
+    payload[payload.size() - 10] = 3; // hwType offset (approx)
+    // Just test with hwType=3 in a fresh minimal payload
+    std::vector<uint8_t> express = {0x00, 5, 3};
+    express.push_back(0); // empty hw name
+    for (int i = 0; i < 12; i++) express.push_back(0xBB);
+    express.push_back(0); // isPaired
+    express.push_back(0); // fwTest
+    express.push_back(3); // hwType = VESCExpress
+    auto fw2 = nosedive::parse_fw_version(express.data(), express.size());
+    ASSERT(fw2.has_value(), "parse_fw_version express: success");
+    ASSERT_EQ(fw2->hw_type, nosedive::HWType::VESCExpress, "parse_fw_version express: type");
+
+    // Too short
+    uint8_t bad[] = {0x00, 6};
+    auto bad_result = nosedive::parse_fw_version(bad, 2);
+    ASSERT(!bad_result.has_value(), "parse_fw_version: too short");
+}
+
+// --- CAN ping parsing ---
+static void test_parse_ping_can() {
+    uint8_t payload[] = {62, 10, 253}; // cmd=PingCAN, ids: 10 (BMS), 253 (Express)
+    auto ids = nosedive::parse_ping_can(payload, 3);
+    ASSERT_EQ(ids.size(), 2u, "parse_ping_can: 2 devices");
+    ASSERT_EQ(ids[0], 10, "parse_ping_can: BMS");
+    ASSERT_EQ(ids[1], 253, "parse_ping_can: Express");
+
+    // Empty response
+    uint8_t empty[] = {62};
+    auto none = nosedive::parse_ping_can(empty, 1);
+    ASSERT_EQ(none.size(), 0u, "parse_ping_can: empty");
+}
+
+// --- Refloat info parsing ---
+static void test_parse_refloat_info() {
+    // [cmd=36][magic=0x65][cmdId=0][version=2][major=1][minor=3][patch=0]
+    // [name:20 bytes][suffix:20 bytes]
+    std::vector<uint8_t> payload;
+    payload.push_back(36);   // COMM_CUSTOM_APP_DATA
+    payload.push_back(0x65); // magic
+    payload.push_back(0x00); // CommandInfo
+    payload.push_back(2);    // version
+    payload.push_back(1);    // major
+    payload.push_back(3);    // minor
+    payload.push_back(0);    // patch
+    // name: "Refloat" + padding
+    std::string name = "Refloat";
+    for (size_t i = 0; i < 20; i++) payload.push_back(i < name.size() ? name[i] : 0);
+    // suffix: "beta" + padding
+    std::string suffix = "beta";
+    for (size_t i = 0; i < 20; i++) payload.push_back(i < suffix.size() ? suffix[i] : 0);
+
+    auto info = nosedive::parse_refloat_info(payload.data(), payload.size());
+    ASSERT(info.has_value(), "parse_refloat_info: success");
+    ASSERT_EQ(info->major, 1, "parse_refloat_info: major");
+    ASSERT_EQ(info->minor, 3, "parse_refloat_info: minor");
+    ASSERT_EQ(info->patch, 0, "parse_refloat_info: patch");
+    ASSERT_EQ(info->name, "Refloat", "parse_refloat_info: name");
+    ASSERT_EQ(info->suffix, "beta", "parse_refloat_info: suffix");
+    ASSERT_EQ(info->version_string(), "1.3.0-beta", "parse_refloat_info: version_string");
+}
+
+// --- Command builders ---
+static void test_command_builders() {
+    auto cmd = nosedive::build_command(nosedive::CommPacketID::GetValues);
+    ASSERT_EQ(cmd.size(), 1u, "build_command: size");
+    ASSERT_EQ(cmd[0], 4, "build_command: GetValues");
+
+    auto can = nosedive::build_fw_version_request_can(253);
+    ASSERT_EQ(can.size(), 3u, "build_fw_version_request_can: size");
+    ASSERT_EQ(can[0], 34, "build_fw_version_request_can: ForwardCAN");
+    ASSERT_EQ(can[1], 253, "build_fw_version_request_can: target_id");
+    ASSERT_EQ(can[2], 0, "build_fw_version_request_can: FWVersion cmd");
+
+    auto refloat = nosedive::build_refloat_info_request();
+    ASSERT_EQ(refloat.size(), 3u, "build_refloat_info_request: size");
+    ASSERT_EQ(refloat[0], 36, "build_refloat_info_request: CustomAppData");
+    ASSERT_EQ(refloat[1], 0x65, "build_refloat_info_request: magic");
+    ASSERT_EQ(refloat[2], 0x00, "build_refloat_info_request: CommandInfo");
+}
+
+// --- Speed / battery computations ---
+static void test_computed_values() {
+    // Speed from ERPM: erpm / (pole_pairs * 60 / wheel_circ)
+    double speed = nosedive::speed_from_erpm(10000, 15, 0.8778);
+    ASSERT(speed > 0, "speed_from_erpm: positive");
+    ASSERT_NEAR(speed, 10000.0 / (15.0 * 60.0 / 0.8778), 0.001, "speed_from_erpm: correct");
+
+    // Edge cases
+    ASSERT_NEAR(nosedive::speed_from_erpm(0, 15, 0.88), 0.0, 0.001, "speed_from_erpm: zero erpm");
+    ASSERT_NEAR(nosedive::speed_from_erpm(1000, 0, 0.88), 0.0, 0.001, "speed_from_erpm: zero poles");
+
+    // Battery percent
+    ASSERT_NEAR(nosedive::battery_percent(72.0, 60.0, 84.0), 50.0, 0.01, "battery_percent: 50%");
+    ASSERT_NEAR(nosedive::battery_percent(84.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: 100%");
+    ASSERT_NEAR(nosedive::battery_percent(60.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: 0%");
+    ASSERT_NEAR(nosedive::battery_percent(90.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: clamped max");
+    ASSERT_NEAR(nosedive::battery_percent(50.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: clamped min");
+}
+
 static void test_storage_roundtrip() {
     nosedive::AppData data;
 
@@ -501,12 +628,15 @@ static void test_storage_roundtrip() {
     ASSERT_NEAR(lp.disengage_speed, 3.5, 0.01, "storage: profile disengage_speed");
 }
 
-// --- Storage FFI round-trip ---
-static void test_storage_ffi() {
-    auto* app = nd_app_data_create();
-    ASSERT(app != nullptr, "ffi storage: create");
+// --- Engine FFI round-trip ---
+static void test_engine_ffi() {
+    const char* path = "/tmp/nosedive_test_engine.json";
+    std::remove(path); // clean slate
 
-    // Add a board via FFI
+    auto* e = nd_engine_create(path);
+    ASSERT(e != nullptr, "engine: create");
+
+    // Save a board via engine
     nd_board_t cb = {};
     std::strncpy(cb.id, "ffi-board-1", sizeof(cb.id) - 1);
     std::strncpy(cb.name, "Test Board", sizeof(cb.name) - 1);
@@ -518,52 +648,100 @@ static void test_storage_ffi() {
     cb.battery_voltage_min = 60.0;
     cb.battery_voltage_max = 84.0;
     cb.wizard_complete = true;
-    nd_app_data_add_board(app, &cb);
-    ASSERT_EQ(nd_app_data_board_count(app), 1u, "ffi storage: 1 board");
+    nd_engine_save_board(e, &cb);
+    ASSERT_EQ(nd_engine_board_count(e), 1u, "engine: 1 board");
 
-    // Add a profile via FFI
+    // Save a profile via engine
     nd_rider_profile_t cp = {};
     std::strncpy(cp.id, "ffi-profile-1", sizeof(cp.id) - 1);
     std::strncpy(cp.name, "Flow", sizeof(cp.name) - 1);
     std::strncpy(cp.icon, "wind", sizeof(cp.icon) - 1);
     cp.responsiveness = 5.0;
     cp.stability = 5.0;
-    nd_app_data_add_profile(app, &cp);
-    ASSERT_EQ(nd_app_data_profile_count(app), 1u, "ffi storage: 1 profile");
+    nd_engine_save_profile(e, &cp);
+    ASSERT_EQ(nd_engine_profile_count(e), 1u, "engine: 1 profile");
 
-    nd_app_data_set_active_profile_id(app, "ffi-profile-1");
+    nd_engine_set_active_profile_id(e, "ffi-profile-1");
+    nd_engine_destroy(e);
 
-    // Save to temp file
-    const char* path = "/tmp/nosedive_test_storage.json";
-    bool saved = nd_app_data_save(app, path);
-    ASSERT(saved, "ffi storage: save ok");
-    nd_app_data_free(app);
-
-    // Load back
-    auto* loaded = nd_app_data_load(path);
-    ASSERT(loaded != nullptr, "ffi storage: load ok");
-    ASSERT_EQ(nd_app_data_board_count(loaded), 1u, "ffi storage: loaded 1 board");
-    ASSERT_EQ(nd_app_data_profile_count(loaded), 1u, "ffi storage: loaded 1 profile");
+    // Reload from disk
+    auto* e2 = nd_engine_create(path);
+    ASSERT(e2 != nullptr, "engine: reload");
+    ASSERT_EQ(nd_engine_board_count(e2), 1u, "engine: reloaded 1 board");
+    ASSERT_EQ(nd_engine_profile_count(e2), 1u, "engine: reloaded 1 profile");
 
     nd_board_t lb = {};
-    ASSERT(nd_app_data_get_board(loaded, 0, &lb), "ffi storage: get_board");
-    ASSERT_EQ(std::string(lb.id), "ffi-board-1", "ffi storage: board id");
-    ASSERT_EQ(std::string(lb.name), "Test Board", "ffi storage: board name");
-    ASSERT_EQ(lb.fw_major, 6, "ffi storage: board fw_major");
-    ASSERT(lb.wizard_complete, "ffi storage: board wizard_complete");
-    ASSERT_NEAR(lb.wheel_circumference_m, 0.88, 0.001, "ffi storage: board wheel_circ");
+    ASSERT(nd_engine_get_board(e2, 0, &lb), "engine: get_board");
+    ASSERT_EQ(std::string(lb.id), "ffi-board-1", "engine: board id");
+    ASSERT_EQ(std::string(lb.name), "Test Board", "engine: board name");
+    ASSERT_EQ(lb.fw_major, 6, "engine: board fw_major");
+    ASSERT(lb.wizard_complete, "engine: board wizard_complete");
+    ASSERT_NEAR(lb.wheel_circumference_m, 0.88, 0.001, "engine: board wheel_circ");
 
     nd_rider_profile_t lp = {};
-    ASSERT(nd_app_data_get_profile(loaded, 0, &lp), "ffi storage: get_profile");
-    ASSERT_EQ(std::string(lp.id), "ffi-profile-1", "ffi storage: profile id");
-    ASSERT_EQ(std::string(lp.name), "Flow", "ffi storage: profile name");
-    ASSERT_NEAR(lp.responsiveness, 5.0, 0.01, "ffi storage: profile responsiveness");
+    ASSERT(nd_engine_get_profile(e2, 0, &lp), "engine: get_profile");
+    ASSERT_EQ(std::string(lp.id), "ffi-profile-1", "engine: profile id");
+    ASSERT_EQ(std::string(lp.name), "Flow", "engine: profile name");
+    ASSERT_NEAR(lp.responsiveness, 5.0, 0.01, "engine: profile responsiveness");
 
-    auto* aid = nd_app_data_active_profile_id(loaded);
-    ASSERT(aid != nullptr, "ffi storage: active profile id not null");
-    ASSERT_EQ(std::string(aid), "ffi-profile-1", "ffi storage: active profile id");
+    auto* aid = nd_engine_active_profile_id(e2);
+    ASSERT(aid != nullptr, "engine: active profile id not null");
+    ASSERT_EQ(std::string(aid), "ffi-profile-1", "engine: active profile id");
 
-    nd_app_data_free(loaded);
+    nd_engine_destroy(e2);
+    std::remove(path);
+}
+
+// --- Engine payload handling ---
+static void test_engine_payload() {
+    const char* path = "/tmp/nosedive_test_engine_payload.json";
+    std::remove(path);
+
+    auto* e = nd_engine_create(path);
+
+    // Track sent payloads
+    static std::vector<std::vector<uint8_t>> sent;
+    sent.clear();
+    nd_engine_set_send_callback(e, [](const uint8_t* data, size_t len, void*) {
+        sent.emplace_back(data, data + len);
+    }, nullptr);
+
+    // Simulate connection — should trigger FW, CAN, Refloat requests
+    nd_engine_on_connected(e);
+    ASSERT(sent.size() >= 3, "engine: sends discovery on connect");
+
+    // Feed a FW version response
+    // [cmd=0][major=6][minor=5][hw="TestHW"\0][uuid:12 bytes]
+    std::vector<uint8_t> fw_payload;
+    fw_payload.push_back(0x00); // COMM_FW_VERSION
+    fw_payload.push_back(6);    // major
+    fw_payload.push_back(5);    // minor
+    const char* hw = "TestHW";
+    for (size_t i = 0; hw[i]; i++) fw_payload.push_back(hw[i]);
+    fw_payload.push_back(0); // null terminator
+    // UUID: 12 bytes
+    for (int i = 0; i < 12; i++) fw_payload.push_back(0xA0 + i);
+
+    nd_engine_handle_payload(e, fw_payload.data(), fw_payload.size());
+
+    ASSERT(nd_engine_has_active_board(e), "engine: has active board after FW");
+
+    nd_fw_version_t fw = {};
+    ASSERT(nd_engine_get_main_fw(e, &fw), "engine: get main fw");
+    ASSERT_EQ(fw.major, 6, "engine: fw major");
+    ASSERT_EQ(fw.minor, 5, "engine: fw minor");
+    ASSERT_EQ(std::string(fw.hw_name), "TestHW", "engine: fw hw_name");
+
+    // Telemetry should be zeroed initially
+    nd_telemetry_t tel = {};
+    nd_engine_get_telemetry(e, &tel);
+    ASSERT_NEAR(tel.speed, 0.0, 0.001, "engine: initial speed 0");
+
+    // Disconnect
+    nd_engine_on_disconnected(e);
+    ASSERT(!nd_engine_has_active_board(e), "engine: no board after disconnect");
+
+    nd_engine_destroy(e);
     std::remove(path);
 }
 
@@ -586,8 +764,14 @@ int main() {
     test_ble_transport();
     test_ffi_decoder();
     test_ffi_transport();
+    test_parse_fw_version();
+    test_parse_ping_can();
+    test_parse_refloat_info();
+    test_command_builders();
+    test_computed_values();
     test_storage_roundtrip();
-    test_storage_ffi();
+    test_engine_ffi();
+    test_engine_payload();
 
     std::printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

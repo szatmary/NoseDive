@@ -1,7 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
+#include <memory>
+#include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace nosedive {
@@ -76,5 +80,37 @@ bool app_data_save(const AppData& data, const std::string& path);
 
 /// Load AppData from a file path. Returns empty AppData if file doesn't exist or is invalid.
 AppData app_data_load(const std::string& path);
+
+/// Storage singleton — owns all persisted data, auto-saves on mutation.
+class Storage {
+public:
+    /// Initialize with file path. Loads existing data if present.
+    explicit Storage(std::string path);
+
+    // Boards
+    const std::vector<Board>& boards() const { return data_.boards; }
+    std::optional<std::reference_wrapper<const Board>> find_board(std::string_view id) const;
+    void upsert_board(Board board);
+    void remove_board(std::string_view id);
+
+    // Profiles
+    const std::vector<RiderProfile>& profiles() const { return data_.rider_profiles; }
+    std::optional<std::reference_wrapper<const RiderProfile>> find_profile(std::string_view id) const;
+    void upsert_profile(RiderProfile profile);
+    void remove_profile(std::string_view id);
+
+    // Active profile
+    const std::string& active_profile_id() const { return data_.active_profile_id; }
+    void set_active_profile_id(std::string id);
+
+    /// Force save (normally automatic after each mutation).
+    void save();
+
+private:
+    std::string path_;
+    AppData data_;
+
+    void persist();
+};
 
 } // namespace nosedive

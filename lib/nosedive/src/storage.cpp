@@ -1,5 +1,6 @@
 #include "nosedive/storage.hpp"
 #include "../third_party/nlohmann_json.hpp"
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -163,6 +164,81 @@ AppData app_data_load(const std::string& path) {
     std::stringstream ss;
     ss << f.rdbuf();
     return app_data_from_json(ss.str());
+}
+
+// --- Storage class ---
+
+Storage::Storage(std::string path) : path_(std::move(path)) {
+    data_ = app_data_load(path_);
+}
+
+std::optional<std::reference_wrapper<const Board>> Storage::find_board(std::string_view id) const {
+    for (const auto& b : data_.boards) {
+        if (b.id == id) return std::cref(b);
+    }
+    return std::nullopt;
+}
+
+void Storage::upsert_board(Board board) {
+    for (auto& b : data_.boards) {
+        if (b.id == board.id) {
+            b = std::move(board);
+            persist();
+            return;
+        }
+    }
+    data_.boards.push_back(std::move(board));
+    persist();
+}
+
+void Storage::remove_board(std::string_view id) {
+    auto it = std::remove_if(data_.boards.begin(), data_.boards.end(),
+        [&](const Board& b) { return b.id == id; });
+    if (it != data_.boards.end()) {
+        data_.boards.erase(it, data_.boards.end());
+        persist();
+    }
+}
+
+std::optional<std::reference_wrapper<const RiderProfile>> Storage::find_profile(std::string_view id) const {
+    for (const auto& p : data_.rider_profiles) {
+        if (p.id == id) return std::cref(p);
+    }
+    return std::nullopt;
+}
+
+void Storage::upsert_profile(RiderProfile profile) {
+    for (auto& p : data_.rider_profiles) {
+        if (p.id == profile.id) {
+            p = std::move(profile);
+            persist();
+            return;
+        }
+    }
+    data_.rider_profiles.push_back(std::move(profile));
+    persist();
+}
+
+void Storage::remove_profile(std::string_view id) {
+    auto it = std::remove_if(data_.rider_profiles.begin(), data_.rider_profiles.end(),
+        [&](const RiderProfile& p) { return p.id == id; });
+    if (it != data_.rider_profiles.end()) {
+        data_.rider_profiles.erase(it, data_.rider_profiles.end());
+        persist();
+    }
+}
+
+void Storage::set_active_profile_id(std::string id) {
+    data_.active_profile_id = std::move(id);
+    persist();
+}
+
+void Storage::save() {
+    persist();
+}
+
+void Storage::persist() {
+    app_data_save(data_, path_);
 }
 
 } // namespace nosedive
