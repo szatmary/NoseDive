@@ -370,24 +370,11 @@ class BoardManager: ObservableObject {
         telemetry.speed * 2.237
     }
 
-    // MARK: - Persistence
+    // MARK: - Persistence (via C++ libnosedive)
 
     private var saveCancellables = Set<AnyCancellable>()
 
-    /// Container for all data we persist to disk.
-    private struct PersistedData: Codable {
-        var boards: [Board]
-        var riderProfiles: [RiderProfile]
-        var activeProfileId: UUID
-    }
-
-    private static var storeURL: URL {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
-        return dir.appendingPathComponent("nosedive_data.json")
-    }
-
     private func setupAutosave() {
-        // Debounce saves — write at most once per second
         $boards.combineLatest($riderProfiles, $activeProfile)
             .debounce(for: .seconds(1), scheduler: RunLoop.main)
             .sink { [weak self] _, _, _ in
@@ -397,34 +384,16 @@ class BoardManager: ObservableObject {
     }
 
     func saveToDisk() {
-        let data = PersistedData(
-            boards: boards,
-            riderProfiles: riderProfiles,
-            activeProfileId: activeProfile.id
-        )
-        do {
-            let encoded = try JSONEncoder().encode(data)
-            try encoded.write(to: Self.storeURL, options: .atomic)
-        } catch {
-            print("NoseDive: failed to save data: \(error)")
-        }
+        NoseDiveStorage.save(boards: boards, profiles: riderProfiles, activeProfileId: activeProfile.id)
     }
 
     private func loadFromDisk() {
-        guard FileManager.default.fileExists(atPath: Self.storeURL.path) else { return }
-        do {
-            let data = try Data(contentsOf: Self.storeURL)
-            let decoded = try JSONDecoder().decode(PersistedData.self, from: data)
-            boards = decoded.boards
-            // Merge built-in presets with any user-created profiles
-            let userProfiles = decoded.riderProfiles.filter { !$0.isBuiltIn }
-            riderProfiles = RiderProfile.builtInPresets + userProfiles
-            // Restore active profile
-            if let saved = riderProfiles.first(where: { $0.id == decoded.activeProfileId }) {
-                activeProfile = saved
-            }
-        } catch {
-            print("NoseDive: failed to load data: \(error)")
+        guard let loaded = NoseDiveStorage.load() else { return }
+        boards = loaded.boards
+        let userProfiles = loaded.profiles.filter { !$0.isBuiltIn }
+        riderProfiles = RiderProfile.builtInPresets + userProfiles
+        if let saved = riderProfiles.first(where: { $0.id.uuidString == loaded.activeProfileId }) {
+            activeProfile = saved
         }
     }
 }

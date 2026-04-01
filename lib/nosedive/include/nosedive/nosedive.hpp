@@ -7,3 +7,4 @@
 #include "nosedive/profile.hpp"
 #include "nosedive/refloat.hpp"
 #include "nosedive/ble_transport.hpp"
+#include "nosedive/storage.hpp"

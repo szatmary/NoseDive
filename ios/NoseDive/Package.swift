@@ -11,9 +11,20 @@ let package = Package(
         .library(name: "NoseDive", targets: ["NoseDive"])
     ],
     targets: [
+        .systemLibrary(
+            name: "CNoseDive",
+            path: "Sources/CNoseDive"
+        ),
         .target(
             name: "NoseDive",
-            path: "Sources"
+            dependencies: ["CNoseDive"],
+            path: "Sources",
+            exclude: ["CNoseDive"],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-L../../lib/nosedive/build",
+                ]),
+            ]
         )
     ]
 )

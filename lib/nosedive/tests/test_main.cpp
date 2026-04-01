@@ -419,6 +419,154 @@ static void test_ffi_transport() {
     nd_transport_destroy(t);
 }
 
+// --- Storage C++ round-trip ---
+static void test_storage_roundtrip() {
+    nosedive::AppData data;
+
+    nosedive::Board b;
+    b.id = "board-uuid-123";
+    b.name = "My OneWheel";
+    b.ble_name = "OW-1234";
+    b.hw_name = "Little FOCer V3.1";
+    b.fw_major = 6;
+    b.fw_minor = 2;
+    b.motor_pole_pairs = 15;
+    b.wheel_circumference_m = 0.92;
+    b.battery_series_cells = 20;
+    b.battery_voltage_min = 60.0;
+    b.battery_voltage_max = 84.0;
+    b.lifetime_distance_m = 12345.67;
+    b.ride_count = 42;
+    b.wizard_complete = true;
+    b.refloat_version = "1.3.0";
+    b.last_connected = 1700000000;
+    b.active_profile_id = "profile-uuid-1";
+    data.boards.push_back(b);
+
+    nosedive::RiderProfile p;
+    p.id = "profile-uuid-1";
+    p.name = "Chill";
+    p.icon = "leaf";
+    p.is_built_in = false;
+    p.created_at = 1700000000;
+    p.modified_at = 1700000100;
+    p.responsiveness = 3.0;
+    p.stability = 7.0;
+    p.carving = 5.5;
+    p.braking = 4.0;
+    p.safety = 8.0;
+    p.agility = 6.0;
+    p.footpad_sensitivity = 5.0;
+    p.disengage_speed = 3.5;
+    data.rider_profiles.push_back(p);
+
+    data.active_profile_id = "profile-uuid-1";
+
+    // Serialize to JSON and back
+    std::string json = nosedive::app_data_to_json(data);
+    ASSERT(!json.empty(), "storage: JSON not empty");
+
+    auto loaded = nosedive::app_data_from_json(json);
+    ASSERT_EQ(loaded.boards.size(), 1u, "storage: 1 board");
+    ASSERT_EQ(loaded.rider_profiles.size(), 1u, "storage: 1 profile");
+    ASSERT_EQ(loaded.active_profile_id, "profile-uuid-1", "storage: active profile id");
+
+    auto& lb = loaded.boards[0];
+    ASSERT_EQ(lb.id, "board-uuid-123", "storage: board id");
+    ASSERT_EQ(lb.name, "My OneWheel", "storage: board name");
+    ASSERT_EQ(lb.ble_name, "OW-1234", "storage: board ble_name");
+    ASSERT_EQ(lb.hw_name, "Little FOCer V3.1", "storage: board hw_name");
+    ASSERT_EQ(lb.fw_major, 6, "storage: board fw_major");
+    ASSERT_EQ(lb.fw_minor, 2, "storage: board fw_minor");
+    ASSERT_EQ(lb.motor_pole_pairs, 15, "storage: board motor_pole_pairs");
+    ASSERT_NEAR(lb.wheel_circumference_m, 0.92, 0.001, "storage: board wheel_circ");
+    ASSERT_EQ(lb.battery_series_cells, 20, "storage: board battery_cells");
+    ASSERT_NEAR(lb.battery_voltage_min, 60.0, 0.01, "storage: board batt_min");
+    ASSERT_NEAR(lb.battery_voltage_max, 84.0, 0.01, "storage: board batt_max");
+    ASSERT_NEAR(lb.lifetime_distance_m, 12345.67, 0.01, "storage: board distance");
+    ASSERT_EQ(lb.ride_count, 42, "storage: board ride_count");
+    ASSERT(lb.wizard_complete, "storage: board wizard_complete");
+    ASSERT_EQ(lb.refloat_version, "1.3.0", "storage: board refloat_version");
+    ASSERT_EQ(lb.last_connected, 1700000000, "storage: board last_connected");
+    ASSERT_EQ(lb.active_profile_id, "profile-uuid-1", "storage: board active_profile_id");
+
+    auto& lp = loaded.rider_profiles[0];
+    ASSERT_EQ(lp.id, "profile-uuid-1", "storage: profile id");
+    ASSERT_EQ(lp.name, "Chill", "storage: profile name");
+    ASSERT_EQ(lp.icon, "leaf", "storage: profile icon");
+    ASSERT(!lp.is_built_in, "storage: profile not built-in");
+    ASSERT_NEAR(lp.responsiveness, 3.0, 0.01, "storage: profile responsiveness");
+    ASSERT_NEAR(lp.stability, 7.0, 0.01, "storage: profile stability");
+    ASSERT_NEAR(lp.footpad_sensitivity, 5.0, 0.01, "storage: profile footpad_sens");
+    ASSERT_NEAR(lp.disengage_speed, 3.5, 0.01, "storage: profile disengage_speed");
+}
+
+// --- Storage FFI round-trip ---
+static void test_storage_ffi() {
+    auto* app = nd_app_data_create();
+    ASSERT(app != nullptr, "ffi storage: create");
+
+    // Add a board via FFI
+    nd_board_t cb = {};
+    std::strncpy(cb.id, "ffi-board-1", sizeof(cb.id) - 1);
+    std::strncpy(cb.name, "Test Board", sizeof(cb.name) - 1);
+    cb.fw_major = 6;
+    cb.fw_minor = 5;
+    cb.motor_pole_pairs = 15;
+    cb.wheel_circumference_m = 0.88;
+    cb.battery_series_cells = 20;
+    cb.battery_voltage_min = 60.0;
+    cb.battery_voltage_max = 84.0;
+    cb.wizard_complete = true;
+    nd_app_data_add_board(app, &cb);
+    ASSERT_EQ(nd_app_data_board_count(app), 1u, "ffi storage: 1 board");
+
+    // Add a profile via FFI
+    nd_rider_profile_t cp = {};
+    std::strncpy(cp.id, "ffi-profile-1", sizeof(cp.id) - 1);
+    std::strncpy(cp.name, "Flow", sizeof(cp.name) - 1);
+    std::strncpy(cp.icon, "wind", sizeof(cp.icon) - 1);
+    cp.responsiveness = 5.0;
+    cp.stability = 5.0;
+    nd_app_data_add_profile(app, &cp);
+    ASSERT_EQ(nd_app_data_profile_count(app), 1u, "ffi storage: 1 profile");
+
+    nd_app_data_set_active_profile_id(app, "ffi-profile-1");
+
+    // Save to temp file
+    const char* path = "/tmp/nosedive_test_storage.json";
+    bool saved = nd_app_data_save(app, path);
+    ASSERT(saved, "ffi storage: save ok");
+    nd_app_data_free(app);
+
+    // Load back
+    auto* loaded = nd_app_data_load(path);
+    ASSERT(loaded != nullptr, "ffi storage: load ok");
+    ASSERT_EQ(nd_app_data_board_count(loaded), 1u, "ffi storage: loaded 1 board");
+    ASSERT_EQ(nd_app_data_profile_count(loaded), 1u, "ffi storage: loaded 1 profile");
+
+    nd_board_t lb = {};
+    ASSERT(nd_app_data_get_board(loaded, 0, &lb), "ffi storage: get_board");
+    ASSERT_EQ(std::string(lb.id), "ffi-board-1", "ffi storage: board id");
+    ASSERT_EQ(std::string(lb.name), "Test Board", "ffi storage: board name");
+    ASSERT_EQ(lb.fw_major, 6, "ffi storage: board fw_major");
+    ASSERT(lb.wizard_complete, "ffi storage: board wizard_complete");
+    ASSERT_NEAR(lb.wheel_circumference_m, 0.88, 0.001, "ffi storage: board wheel_circ");
+
+    nd_rider_profile_t lp = {};
+    ASSERT(nd_app_data_get_profile(loaded, 0, &lp), "ffi storage: get_profile");
+    ASSERT_EQ(std::string(lp.id), "ffi-profile-1", "ffi storage: profile id");
+    ASSERT_EQ(std::string(lp.name), "Flow", "ffi storage: profile name");
+    ASSERT_NEAR(lp.responsiveness, 5.0, 0.01, "ffi storage: profile responsiveness");
+
+    auto* aid = nd_app_data_active_profile_id(loaded);
+    ASSERT(aid != nullptr, "ffi storage: active profile id not null");
+    ASSERT_EQ(std::string(aid), "ffi-profile-1", "ffi storage: active profile id");
+
+    nd_app_data_free(loaded);
+    std::remove(path);
+}
+
 int main() {
     test_crc16();
     test_packet_roundtrip_short();
@@ -438,6 +586,8 @@ int main() {
     test_ble_transport();
     test_ffi_decoder();
     test_ffi_transport();
+    test_storage_roundtrip();
+    test_storage_ffi();
 
     std::printf("\n%d/%d tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

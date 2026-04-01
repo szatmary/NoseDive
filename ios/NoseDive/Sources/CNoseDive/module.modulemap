@@ -1,0 +1,6 @@
+module CNoseDive [system] {
+    header "nosedive_ffi.h"
+    link "nosedive_ffi"
+    link "c++"
+    export *
+}

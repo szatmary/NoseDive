@@ -5,8 +5,10 @@
 #include "nosedive/profile.hpp"
 #include "nosedive/refloat.hpp"
 #include "nosedive/ble_transport.hpp"
+#include "nosedive/storage.hpp"
 #include <cstdlib>
 #include <cstring>
+#include <algorithm>
 
 // Opaque wrapper
 struct nd_profile {
@@ -292,6 +294,173 @@ bool nd_transport_send_custom_app_data(nd_transport_t* t, const uint8_t* data, s
 
 void nd_transport_reset(nd_transport_t* t) {
     t->transport.reset();
+}
+
+// --- Storage ---
+
+struct nd_app_data {
+    nosedive::AppData data;
+};
+
+static void copy_str(char* dst, size_t dst_size, const std::string& src) {
+    size_t n = std::min(src.size(), dst_size - 1);
+    std::memcpy(dst, src.data(), n);
+    dst[n] = '\0';
+}
+
+static void board_to_c(const nosedive::Board& b, nd_board_t* out) {
+    std::memset(out, 0, sizeof(*out));
+    copy_str(out->id, sizeof(out->id), b.id);
+    copy_str(out->name, sizeof(out->name), b.name);
+    copy_str(out->ble_name, sizeof(out->ble_name), b.ble_name);
+    copy_str(out->ble_address, sizeof(out->ble_address), b.ble_address);
+    out->last_connected = b.last_connected;
+    out->wizard_complete = b.wizard_complete;
+    copy_str(out->hw_name, sizeof(out->hw_name), b.hw_name);
+    out->fw_major = b.fw_major;
+    out->fw_minor = b.fw_minor;
+    copy_str(out->refloat_version, sizeof(out->refloat_version), b.refloat_version);
+    out->motor_pole_pairs = b.motor_pole_pairs;
+    out->wheel_circumference_m = b.wheel_circumference_m;
+    out->battery_series_cells = b.battery_series_cells;
+    out->battery_voltage_min = b.battery_voltage_min;
+    out->battery_voltage_max = b.battery_voltage_max;
+    out->lifetime_distance_m = b.lifetime_distance_m;
+    out->ride_count = b.ride_count;
+    copy_str(out->active_profile_id, sizeof(out->active_profile_id), b.active_profile_id);
+}
+
+static nosedive::Board board_from_c(const nd_board_t* b) {
+    nosedive::Board out;
+    out.id = b->id;
+    out.name = b->name;
+    out.ble_name = b->ble_name;
+    out.ble_address = b->ble_address;
+    out.last_connected = b->last_connected;
+    out.wizard_complete = b->wizard_complete;
+    out.hw_name = b->hw_name;
+    out.fw_major = b->fw_major;
+    out.fw_minor = b->fw_minor;
+    out.refloat_version = b->refloat_version;
+    out.motor_pole_pairs = b->motor_pole_pairs;
+    out.wheel_circumference_m = b->wheel_circumference_m;
+    out.battery_series_cells = b->battery_series_cells;
+    out.battery_voltage_min = b->battery_voltage_min;
+    out.battery_voltage_max = b->battery_voltage_max;
+    out.lifetime_distance_m = b->lifetime_distance_m;
+    out.ride_count = b->ride_count;
+    out.active_profile_id = b->active_profile_id;
+    return out;
+}
+
+static void profile_to_c(const nosedive::RiderProfile& p, nd_rider_profile_t* out) {
+    std::memset(out, 0, sizeof(*out));
+    copy_str(out->id, sizeof(out->id), p.id);
+    copy_str(out->name, sizeof(out->name), p.name);
+    copy_str(out->icon, sizeof(out->icon), p.icon);
+    out->is_built_in = p.is_built_in;
+    out->created_at = p.created_at;
+    out->modified_at = p.modified_at;
+    out->responsiveness = p.responsiveness;
+    out->stability = p.stability;
+    out->carving = p.carving;
+    out->braking = p.braking;
+    out->safety = p.safety;
+    out->agility = p.agility;
+    out->footpad_sensitivity = p.footpad_sensitivity;
+    out->disengage_speed = p.disengage_speed;
+}
+
+static nosedive::RiderProfile profile_from_c(const nd_rider_profile_t* p) {
+    nosedive::RiderProfile out;
+    out.id = p->id;
+    out.name = p->name;
+    out.icon = p->icon;
+    out.is_built_in = p->is_built_in;
+    out.created_at = p->created_at;
+    out.modified_at = p->modified_at;
+    out.responsiveness = p->responsiveness;
+    out.stability = p->stability;
+    out.carving = p->carving;
+    out.braking = p->braking;
+    out.safety = p->safety;
+    out.agility = p->agility;
+    out.footpad_sensitivity = p->footpad_sensitivity;
+    out.disengage_speed = p->disengage_speed;
+    return out;
+}
+
+nd_app_data_t* nd_app_data_load(const char* path) {
+    auto* handle = new nd_app_data{nosedive::app_data_load(path)};
+    return handle;
+}
+
+bool nd_app_data_save(const nd_app_data_t* data, const char* path) {
+    return nosedive::app_data_save(data->data, path);
+}
+
+nd_app_data_t* nd_app_data_create(void) {
+    return new nd_app_data{};
+}
+
+void nd_app_data_free(nd_app_data_t* data) {
+    delete data;
+}
+
+size_t nd_app_data_board_count(const nd_app_data_t* data) {
+    return data->data.boards.size();
+}
+
+bool nd_app_data_get_board(const nd_app_data_t* data, size_t index, nd_board_t* out) {
+    if (index >= data->data.boards.size()) return false;
+    board_to_c(data->data.boards[index], out);
+    return true;
+}
+
+void nd_app_data_set_board(nd_app_data_t* data, size_t index, const nd_board_t* board) {
+    if (index >= data->data.boards.size()) return;
+    data->data.boards[index] = board_from_c(board);
+}
+
+void nd_app_data_add_board(nd_app_data_t* data, const nd_board_t* board) {
+    data->data.boards.push_back(board_from_c(board));
+}
+
+void nd_app_data_remove_board(nd_app_data_t* data, size_t index) {
+    if (index >= data->data.boards.size()) return;
+    data->data.boards.erase(data->data.boards.begin() + static_cast<ptrdiff_t>(index));
+}
+
+size_t nd_app_data_profile_count(const nd_app_data_t* data) {
+    return data->data.rider_profiles.size();
+}
+
+bool nd_app_data_get_profile(const nd_app_data_t* data, size_t index, nd_rider_profile_t* out) {
+    if (index >= data->data.rider_profiles.size()) return false;
+    profile_to_c(data->data.rider_profiles[index], out);
+    return true;
+}
+
+void nd_app_data_set_profile(nd_app_data_t* data, size_t index, const nd_rider_profile_t* profile) {
+    if (index >= data->data.rider_profiles.size()) return;
+    data->data.rider_profiles[index] = profile_from_c(profile);
+}
+
+void nd_app_data_add_profile(nd_app_data_t* data, const nd_rider_profile_t* profile) {
+    data->data.rider_profiles.push_back(profile_from_c(profile));
+}
+
+void nd_app_data_remove_profile(nd_app_data_t* data, size_t index) {
+    if (index >= data->data.rider_profiles.size()) return;
+    data->data.rider_profiles.erase(data->data.rider_profiles.begin() + static_cast<ptrdiff_t>(index));
+}
+
+const char* nd_app_data_active_profile_id(const nd_app_data_t* data) {
+    return data->data.active_profile_id.c_str();
+}
+
+void nd_app_data_set_active_profile_id(nd_app_data_t* data, const char* profile_id) {
+    data->data.active_profile_id = profile_id ? profile_id : "";
 }
 
 } // extern "C"

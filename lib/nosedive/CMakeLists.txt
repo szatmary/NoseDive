@@ -12,15 +12,21 @@ set(NOSEDIVE_SOURCES
     src/profile.cpp
     src/refloat.cpp
     src/ble_transport.cpp
+    src/storage.cpp
 )
 
 # Static library
 add_library(nosedive STATIC ${NOSEDIVE_SOURCES})
 target_include_directories(nosedive PUBLIC include)
 
-# C API shared library (for FFI from Swift / Kotlin-JNI)
+# C API shared library (for Android / Kotlin-JNI)
 add_library(nosedive_ffi SHARED src/ffi.cpp ${NOSEDIVE_SOURCES})
 target_include_directories(nosedive_ffi PUBLIC include)
+
+# C API static library (for iOS / Swift SPM linking)
+add_library(nosedive_ffi_static STATIC src/ffi.cpp ${NOSEDIVE_SOURCES})
+target_include_directories(nosedive_ffi_static PUBLIC include)
+set_target_properties(nosedive_ffi_static PROPERTIES OUTPUT_NAME nosedive_ffi)
 
 # iOS framework settings
 if(CMAKE_SYSTEM_NAME STREQUAL "iOS")
