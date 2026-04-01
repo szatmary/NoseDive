@@ -8,6 +8,7 @@
 #include "nosedive/engine.hpp"
 #include <cstring>
 #include <algorithm>
+#include <memory>
 
 // --- Helpers ---
 
@@ -118,12 +119,11 @@ extern "C" {
 // --- Engine lifecycle ---
 
 nd_engine_t* nd_engine_create(const char* storage_path) {
-    auto* e = new nd_engine(storage_path);
-    return e;
+    return std::make_unique<nd_engine>(storage_path).release();
 }
 
 void nd_engine_destroy(nd_engine_t* e) {
-    delete e;
+    std::unique_ptr<nd_engine> p(e);
 }
 
 void nd_engine_set_send_callback(nd_engine_t* e, nd_engine_send_cb cb, void* ctx) {
@@ -368,8 +368,8 @@ struct nd_decoder {
     std::vector<uint8_t> last_pop; // owns data returned by nd_decoder_pop
 };
 
-nd_decoder_t* nd_decoder_create(void) { return new nd_decoder{}; }
-void nd_decoder_destroy(nd_decoder_t* d) { delete d; }
+nd_decoder_t* nd_decoder_create(void) { return std::make_unique<nd_decoder>().release(); }
+void nd_decoder_destroy(nd_decoder_t* d) { std::unique_ptr<nd_decoder> p(d); }
 
 int nd_decoder_feed(nd_decoder_t* d, const uint8_t* data, size_t len) {
     d->decoder.feed(data, len);
@@ -398,8 +398,8 @@ struct nd_transport {
     nd_transport(size_t mtu) : transport(mtu) {}
 };
 
-nd_transport_t* nd_transport_create(size_t mtu) { return new nd_transport(mtu); }
-void nd_transport_destroy(nd_transport_t* t) { delete t; }
+nd_transport_t* nd_transport_create(size_t mtu) { return std::make_unique<nd_transport>(mtu).release(); }
+void nd_transport_destroy(nd_transport_t* t) { std::unique_ptr<nd_transport> p(t); }
 
 void nd_transport_set_send_callback(nd_transport_t* t, nd_send_callback_t cb, void* ctx) {
     t->send_cb = cb;
