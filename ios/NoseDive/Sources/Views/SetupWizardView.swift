@@ -15,9 +15,9 @@ enum WizardStepID: String, CaseIterable, Identifiable {
     /// The default ordered list of steps for board setup.
     /// Reorder this array or remove entries to change the wizard flow.
     static let defaultSteps: [WizardStepID] = [
+        .firmwareCheck,
         .identify,
         .refloatCheck,
-        .firmwareCheck,
         .complete,
     ]
 

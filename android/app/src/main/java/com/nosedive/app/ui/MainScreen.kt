@@ -14,7 +14,6 @@ import androidx.compose.ui.unit.sp
 import com.nosedive.app.ble.BLEService
 import com.nosedive.app.ble.DiscoveredDevice
 import com.nosedive.app.engine.NoseDiveEngine
-import com.nosedive.app.engine.RefloatInfo
 import com.nosedive.app.engine.Telemetry
 
 /**
@@ -218,44 +217,4 @@ fun TelemetryRow(label: String, value: String) {
     }
 }
 
-@Composable
-fun SetupWizardScreen(engine: NoseDiveEngine) {
-    val refloatInfo by engine.refloatInfo.collectAsState()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(32.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text(
-            text = "Setup Wizard",
-            fontSize = 28.sp,
-            fontWeight = FontWeight.Bold
-        )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text("New board detected. Let's set it up.")
-        Spacer(modifier = Modifier.height(32.dp))
-
-        if (!engine.hasRefloat) {
-            Text("Refloat is not installed.")
-            Spacer(modifier = Modifier.height(12.dp))
-            Button(onClick = { engine.installRefloat() }) {
-                Text("Install Refloat")
-            }
-        } else {
-            val ri = refloatInfo
-            if (ri != null) {
-                Text("${ri.name} ${ri.versionString}", fontWeight = FontWeight.Medium)
-            } else {
-                Text("Refloat is installed")
-            }
-        }
-
-        Spacer(modifier = Modifier.height(32.dp))
-        OutlinedButton(onClick = { engine.dismissWizard() }) {
-            Text("Done")
-        }
-    }
-}
+// SetupWizardScreen is defined in SetupWizardScreen.kt

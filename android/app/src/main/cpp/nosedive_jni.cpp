@@ -212,4 +212,91 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeProfileCount(JNIEnv*, jobject)
     return g_engine ? static_cast<jint>(nd_engine_profile_count(g_engine)) : 0;
 }
 
+// Main firmware info — returns [hwName, major, minor, uuid, hwType, customConfigCount, packageName] or null
+JNIEXPORT jobjectArray JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetMainFW(JNIEnv* env, jobject) {
+    if (!g_engine || !nd_engine_has_active_board(g_engine)) return nullptr;
+    nd_fw_version_t fw = nd_engine_get_main_fw(g_engine);
+    if (fw.major == 0 && fw.minor == 0) return nullptr; // no FW data yet
+
+    jclass strClass = env->FindClass("java/lang/String");
+    jobjectArray arr = env->NewObjectArray(7, strClass, nullptr);
+    if (!arr) { env->DeleteLocalRef(strClass); return nullptr; }
+
+    env->SetObjectArrayElement(arr, 0, env->NewStringUTF(fw.hw_name));
+    char buf[16];
+    snprintf(buf, sizeof(buf), "%d", fw.major);
+    env->SetObjectArrayElement(arr, 1, env->NewStringUTF(buf));
+    snprintf(buf, sizeof(buf), "%d", fw.minor);
+    env->SetObjectArrayElement(arr, 2, env->NewStringUTF(buf));
+    env->SetObjectArrayElement(arr, 3, env->NewStringUTF(fw.uuid));
+    snprintf(buf, sizeof(buf), "%d", fw.hw_type);
+    env->SetObjectArrayElement(arr, 4, env->NewStringUTF(buf));
+    snprintf(buf, sizeof(buf), "%d", fw.custom_config_count);
+    env->SetObjectArrayElement(arr, 5, env->NewStringUTF(buf));
+    env->SetObjectArrayElement(arr, 6, env->NewStringUTF(fw.package_name));
+
+    env->DeleteLocalRef(strClass);
+    return arr;
+}
+
+// CAN device count
+JNIEXPORT jint JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeCanDeviceCount(JNIEnv*, jobject) {
+    return g_engine ? static_cast<jint>(nd_engine_can_device_count(g_engine)) : 0;
+}
+
+// CAN device ID at index
+JNIEXPORT jint JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeCanDeviceId(JNIEnv*, jobject, jint index) {
+    if (!g_engine) return 0;
+    return static_cast<jint>(nd_engine_can_device_id(g_engine, static_cast<size_t>(index)));
+}
+
+// Guessed board type — returns String or null
+JNIEXPORT jstring JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeGuessedBoardType(JNIEnv* env, jobject) {
+    if (!g_engine) return nullptr;
+    const char* guess = nd_engine_guessed_board_type(g_engine);
+    if (!guess) return nullptr;
+    return env->NewStringUTF(guess);
+}
+
+// Refloat installing/installed states
+JNIEXPORT jboolean JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeRefloatInstalling(JNIEnv*, jobject) {
+    return g_engine ? nd_engine_refloat_installing(g_engine) : false;
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeRefloatInstalled(JNIEnv*, jobject) {
+    return g_engine ? nd_engine_refloat_installed(g_engine) : false;
+}
+
+// Active board — returns [id, name] or null
+JNIEXPORT jobjectArray JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetActiveBoard(JNIEnv* env, jobject) {
+    if (!g_engine || !nd_engine_has_active_board(g_engine)) return nullptr;
+    nd_board_t b = nd_engine_get_active_board(g_engine);
+
+    jclass strClass = env->FindClass("java/lang/String");
+    jobjectArray arr = env->NewObjectArray(2, strClass, nullptr);
+    if (!arr) { env->DeleteLocalRef(strClass); return nullptr; }
+
+    env->SetObjectArrayElement(arr, 0, env->NewStringUTF(b.id));
+    env->SetObjectArrayElement(arr, 1, env->NewStringUTF(b.name));
+
+    env->DeleteLocalRef(strClass);
+    return arr;
+}
+
+// Save board with wizard_complete = true
+JNIEXPORT void JNICALL
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeSaveBoard(JNIEnv*, jobject) {
+    if (!g_engine || !nd_engine_has_active_board(g_engine)) return;
+    nd_board_t b = nd_engine_get_active_board(g_engine);
+    b.wizard_complete = true;
+    nd_engine_save_board(g_engine, b);
+}
+
 } // extern "C"

@@ -45,6 +45,24 @@ class NoseDiveEngine private constructor(context: Context) {
     private val _refloatInfo = MutableStateFlow<RefloatInfo?>(null)
     val refloatInfo: StateFlow<RefloatInfo?> = _refloatInfo.asStateFlow()
 
+    private val _mainFW = MutableStateFlow<FWVersionInfo?>(null)
+    val mainFW: StateFlow<FWVersionInfo?> = _mainFW.asStateFlow()
+
+    private val _canDevices = MutableStateFlow<List<Int>>(emptyList())
+    val canDevices: StateFlow<List<Int>> = _canDevices.asStateFlow()
+
+    private val _guessedBoardType = MutableStateFlow<String?>(null)
+    val guessedBoardType: StateFlow<String?> = _guessedBoardType.asStateFlow()
+
+    private val _refloatInstalling = MutableStateFlow(false)
+    val refloatInstalling: StateFlow<Boolean> = _refloatInstalling.asStateFlow()
+
+    private val _refloatInstalled = MutableStateFlow(false)
+    val refloatInstalled: StateFlow<Boolean> = _refloatInstalled.asStateFlow()
+
+    private val _activeBoardName = MutableStateFlow<String?>(null)
+    val activeBoardName: StateFlow<String?> = _activeBoardName.asStateFlow()
+
     // BLE service reference for sending data
     var bleService: com.nosedive.app.ble.BLEService? = null
 
@@ -70,6 +88,7 @@ class NoseDiveEngine private constructor(context: Context) {
 
     fun installRefloat() = nativeInstallRefloat()
     fun dismissWizard() = nativeDismissWizard()
+    fun saveBoard() = nativeSaveBoard()
 
     val hasRefloat: Boolean get() = nativeHasRefloat()
     val speedKmh: Double get() = nativeSpeedKmh()
@@ -112,6 +131,37 @@ class NoseDiveEngine private constructor(context: Context) {
             null
         }
 
+        // Refloat install states
+        _refloatInstalling.value = nativeRefloatInstalling()
+        _refloatInstalled.value = nativeRefloatInstalled()
+
+        // Main firmware info
+        val fw = nativeGetMainFW()
+        _mainFW.value = if (fw != null && fw.size == 7) {
+            FWVersionInfo(
+                hwName = fw[0],
+                major = fw[1].toIntOrNull() ?: 0,
+                minor = fw[2].toIntOrNull() ?: 0,
+                uuid = fw[3],
+                hwType = fw[4].toIntOrNull() ?: 0,
+                customConfigCount = fw[5].toIntOrNull() ?: 0,
+                packageName = fw[6]
+            )
+        } else {
+            null
+        }
+
+        // CAN devices
+        val canCount = nativeCanDeviceCount()
+        _canDevices.value = (0 until canCount).map { nativeCanDeviceId(it) }
+
+        // Guessed board type
+        _guessedBoardType.value = nativeGuessedBoardType()
+
+        // Active board name
+        val ab = nativeGetActiveBoard()
+        _activeBoardName.value = if (ab != null && ab.size >= 2) ab[1] else null
+
         // Update telemetry from flat array
         val raw = nativeGetTelemetry()
         if (raw.size >= 13) {
@@ -147,6 +197,14 @@ class NoseDiveEngine private constructor(context: Context) {
     private external fun nativeSpeedMph(): Double
     private external fun nativeGetTelemetry(): DoubleArray
     private external fun nativeGetRefloatInfo(): Array<String>?
+    private external fun nativeGetMainFW(): Array<String>?
+    private external fun nativeCanDeviceCount(): Int
+    private external fun nativeCanDeviceId(index: Int): Int
+    private external fun nativeGuessedBoardType(): String?
+    private external fun nativeRefloatInstalling(): Boolean
+    private external fun nativeRefloatInstalled(): Boolean
+    private external fun nativeGetActiveBoard(): Array<String>?
+    private external fun nativeSaveBoard()
     private external fun nativeBoardCount(): Int
     private external fun nativeProfileCount(): Int
 }
