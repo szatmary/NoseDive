@@ -4,3 +4,4 @@ third_party/
 .claude/
 ios/NoseDive/.build/
 vescsim_state.json
+vescsim/vescsim
