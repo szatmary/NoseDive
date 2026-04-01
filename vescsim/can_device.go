@@ -1,9 +1,8 @@
-package simulator
+package main
 
 import (
 	"log"
 
-	"github.com/szatmary/nosedive/pkg/vesc"
 )
 
 // CANDevice represents a device on the simulated CAN bus that can respond to
@@ -46,43 +45,43 @@ func (ve *VESCExpress) HandleCommand(payload []byte) []byte {
 	if len(payload) == 0 {
 		return nil
 	}
-	cmd := vesc.CommPacketID(payload[0])
+	cmd := CommPacketID(payload[0])
 
 	switch cmd {
-	case vesc.CommFWVersion:
+	case CommFWVersion:
 		return ve.buildFWVersionResponse()
-	case vesc.CommGetValues:
+	case CommGetValues:
 		return ve.buildGetValuesResponse()
-	case vesc.CommPingCAN:
-		return []byte{byte(vesc.CommPingCAN), ve.ControllerID}
-	case vesc.CommAlive:
+	case CommPingCAN:
+		return []byte{byte(CommPingCAN), ve.ControllerID}
+	case CommAlive:
 		return nil
-	case vesc.CommGetIMUData:
+	case CommGetIMUData:
 		// Express has no IMU — return minimal response
-		resp := []byte{byte(vesc.CommGetIMUData)}
-		resp = vesc.AppendUint16(resp, 0) // empty mask
+		resp := []byte{byte(CommGetIMUData)}
+		resp = AppendUint16(resp, 0) // empty mask
 		return resp
-	case vesc.CommGetCustomConfigXML:
+	case CommGetCustomConfigXML:
 		// No custom config on Express
 		if len(payload) < 10 {
 			return nil
 		}
 		confInd := payload[1]
-		resp := []byte{byte(vesc.CommGetCustomConfigXML)}
+		resp := []byte{byte(CommGetCustomConfigXML)}
 		resp = append(resp, confInd)
-		resp = vesc.AppendInt32(resp, 0) // total size = 0
-		resp = vesc.AppendInt32(resp, 0) // offset = 0
+		resp = AppendInt32(resp, 0) // total size = 0
+		resp = AppendInt32(resp, 0) // offset = 0
 		return resp
-	case vesc.CommGetMCConf, vesc.CommGetMCConfDefault:
+	case CommGetMCConf, CommGetMCConfDefault:
 		// Express has no motor — return minimal config
-		return []byte{byte(vesc.CommGetMCConf)}
-	case vesc.CommGetAppConf, vesc.CommGetAppConfDefault:
-		return []byte{byte(vesc.CommGetAppConf)}
-	case vesc.CommReboot, vesc.CommShutdown:
+		return []byte{byte(CommGetMCConf)}
+	case CommGetAppConf, CommGetAppConfDefault:
+		return []byte{byte(CommGetAppConf)}
+	case CommReboot, CommShutdown:
 		log.Printf("vesc_express [%d]: received command 0x%02x (ignored)", ve.ControllerID, cmd)
 		return nil
-	case vesc.CommTerminalCmd, vesc.CommTerminalCmdSync:
-		resp := []byte{byte(vesc.CommPrintText)}
+	case CommTerminalCmd, CommTerminalCmdSync:
+		resp := []byte{byte(CommPrintText)}
 		resp = append(resp, []byte("VESC Express (simulated)\n")...)
 		resp = append(resp, 0)
 		return resp
@@ -96,7 +95,7 @@ func (ve *VESCExpress) HandleCommand(payload []byte) []byte {
 // Same wire format as a regular VESC but with HWType = VESCExpress (3) and
 // no custom configs, no phase filters, no QML.
 func (ve *VESCExpress) buildFWVersionResponse() []byte {
-	resp := []byte{byte(vesc.CommFWVersion)}
+	resp := []byte{byte(CommFWVersion)}
 
 	resp = append(resp, ve.FWMajor, ve.FWMinor)
 
@@ -112,7 +111,7 @@ func (ve *VESCExpress) buildFWVersionResponse() []byte {
 	// FW test version
 	resp = append(resp, 0)
 	// HW type = VESC Express
-	resp = append(resp, byte(vesc.HWTypeVESCExpress))
+	resp = append(resp, byte(HWTypeVESCExpress))
 	// Custom config num = 0 (Express has no custom app)
 	resp = append(resp, 0)
 	// Has phase filters = 0
@@ -127,7 +126,7 @@ func (ve *VESCExpress) buildFWVersionResponse() []byte {
 	resp = append(resp, []byte("VESC Express")...)
 	resp = append(resp, 0)
 	// HW config CRC
-	resp = vesc.AppendUint32(resp, 0xCAFEBEEF)
+	resp = AppendUint32(resp, 0xCAFEBEEF)
 
 	return resp
 }
@@ -172,28 +171,28 @@ func (b *VESCBMS) HandleCommand(payload []byte) []byte {
 	if len(payload) == 0 {
 		return nil
 	}
-	cmd := vesc.CommPacketID(payload[0])
+	cmd := CommPacketID(payload[0])
 
 	switch cmd {
-	case vesc.CommFWVersion:
+	case CommFWVersion:
 		return b.buildFWVersionResponse()
-	case vesc.CommGetValues:
+	case CommGetValues:
 		return b.buildGetValuesResponse()
-	case vesc.CommBMSGetValues:
+	case CommBMSGetValues:
 		return b.buildBMSValuesResponse()
-	case vesc.CommPingCAN:
-		return []byte{byte(vesc.CommPingCAN), b.ControllerID}
-	case vesc.CommAlive:
+	case CommPingCAN:
+		return []byte{byte(CommPingCAN), b.ControllerID}
+	case CommAlive:
 		return nil
-	case vesc.CommGetMCConf, vesc.CommGetMCConfDefault:
-		return []byte{byte(vesc.CommGetMCConf)}
-	case vesc.CommGetAppConf, vesc.CommGetAppConfDefault:
-		return []byte{byte(vesc.CommGetAppConf)}
-	case vesc.CommReboot, vesc.CommShutdown:
+	case CommGetMCConf, CommGetMCConfDefault:
+		return []byte{byte(CommGetMCConf)}
+	case CommGetAppConf, CommGetAppConfDefault:
+		return []byte{byte(CommGetAppConf)}
+	case CommReboot, CommShutdown:
 		log.Printf("vesc_bms [%d]: received command 0x%02x (ignored)", b.ControllerID, cmd)
 		return nil
-	case vesc.CommTerminalCmd, vesc.CommTerminalCmdSync:
-		resp := []byte{byte(vesc.CommPrintText)}
+	case CommTerminalCmd, CommTerminalCmdSync:
+		resp := []byte{byte(CommPrintText)}
 		resp = append(resp, []byte("VESC BMS (simulated)\n")...)
 		resp = append(resp, 0)
 		return resp
@@ -204,14 +203,14 @@ func (b *VESCBMS) HandleCommand(payload []byte) []byte {
 }
 
 func (b *VESCBMS) buildFWVersionResponse() []byte {
-	resp := []byte{byte(vesc.CommFWVersion)}
+	resp := []byte{byte(CommFWVersion)}
 	resp = append(resp, b.FWMajor, b.FWMinor)
 	resp = append(resp, []byte(b.HWName)...)
 	resp = append(resp, 0)
 	resp = append(resp, b.UUID[:]...)
 	resp = append(resp, 0)    // isPaired
 	resp = append(resp, 0)    // FW test version
-	resp = append(resp, byte(vesc.HWTypeVESC)) // BMS uses standard VESC type
+	resp = append(resp, byte(HWTypeVESC)) // BMS uses standard VESC type
 	resp = append(resp, 0)    // custom config num
 	resp = append(resp, 0)    // has phase filters
 	resp = append(resp, 0)    // QML HW
@@ -219,49 +218,49 @@ func (b *VESCBMS) buildFWVersionResponse() []byte {
 	resp = append(resp, 0)    // NRF flags
 	resp = append(resp, []byte("VESC BMS")...)
 	resp = append(resp, 0)
-	resp = vesc.AppendUint32(resp, 0xBAADF00D)
+	resp = AppendUint32(resp, 0xBAADF00D)
 	return resp
 }
 
 func (b *VESCBMS) buildGetValuesResponse() []byte {
-	resp := []byte{byte(vesc.CommGetValues)}
-	resp = vesc.AppendFloat16(resp, b.Temperature, 10) // temp_fet (board temp)
-	resp = vesc.AppendFloat16(resp, 0, 10)              // temp_motor (N/A)
-	resp = vesc.AppendFloat32(resp, 0, 100)              // avg_motor_current
-	resp = vesc.AppendFloat32(resp, b.CurrentIn, 100)    // avg_input_current
-	resp = vesc.AppendFloat32(resp, 0, 100)              // avg_id
-	resp = vesc.AppendFloat32(resp, 0, 100)              // avg_iq
-	resp = vesc.AppendFloat16(resp, 0, 1000)             // duty_cycle
-	resp = vesc.AppendFloat32(resp, 0, 1)                // rpm
-	resp = vesc.AppendFloat16(resp, b.TotalVoltage, 10)  // input_voltage
-	resp = vesc.AppendFloat32(resp, 0, 10000)            // amp_hours
-	resp = vesc.AppendFloat32(resp, 0, 10000)            // amp_hours_charged
-	resp = vesc.AppendFloat32(resp, 0, 10000)            // watt_hours
-	resp = vesc.AppendFloat32(resp, 0, 10000)            // watt_hours_charged
-	resp = vesc.AppendInt32(resp, 0)                      // tachometer
-	resp = vesc.AppendInt32(resp, 0)                      // tachometer_abs
+	resp := []byte{byte(CommGetValues)}
+	resp = AppendFloat16(resp, b.Temperature, 10) // temp_fet (board temp)
+	resp = AppendFloat16(resp, 0, 10)              // temp_motor (N/A)
+	resp = AppendFloat32(resp, 0, 100)              // avg_motor_current
+	resp = AppendFloat32(resp, b.CurrentIn, 100)    // avg_input_current
+	resp = AppendFloat32(resp, 0, 100)              // avg_id
+	resp = AppendFloat32(resp, 0, 100)              // avg_iq
+	resp = AppendFloat16(resp, 0, 1000)             // duty_cycle
+	resp = AppendFloat32(resp, 0, 1)                // rpm
+	resp = AppendFloat16(resp, b.TotalVoltage, 10)  // input_voltage
+	resp = AppendFloat32(resp, 0, 10000)            // amp_hours
+	resp = AppendFloat32(resp, 0, 10000)            // amp_hours_charged
+	resp = AppendFloat32(resp, 0, 10000)            // watt_hours
+	resp = AppendFloat32(resp, 0, 10000)            // watt_hours_charged
+	resp = AppendInt32(resp, 0)                      // tachometer
+	resp = AppendInt32(resp, 0)                      // tachometer_abs
 	resp = append(resp, 0)                                // fault
-	resp = vesc.AppendFloat32(resp, 0, 1000000)          // pid_pos_now
+	resp = AppendFloat32(resp, 0, 1000000)          // pid_pos_now
 	resp = append(resp, b.ControllerID)                   // controller_id
-	resp = vesc.AppendFloat16(resp, b.Temperature, 10)   // temp_mos1
-	resp = vesc.AppendFloat16(resp, b.Temperature, 10)   // temp_mos2
-	resp = vesc.AppendFloat16(resp, b.Temperature, 10)   // temp_mos3
-	resp = vesc.AppendFloat32(resp, 0, 1000)             // avg_vd
-	resp = vesc.AppendFloat32(resp, 0, 1000)             // avg_vq
+	resp = AppendFloat16(resp, b.Temperature, 10)   // temp_mos1
+	resp = AppendFloat16(resp, b.Temperature, 10)   // temp_mos2
+	resp = AppendFloat16(resp, b.Temperature, 10)   // temp_mos3
+	resp = AppendFloat32(resp, 0, 1000)             // avg_vd
+	resp = AppendFloat32(resp, 0, 1000)             // avg_vq
 	resp = append(resp, 0)                                // status
 	return resp
 }
 
 // buildBMSValuesResponse returns COMM_BMS_GET_VALUES with cell data.
 func (b *VESCBMS) buildBMSValuesResponse() []byte {
-	resp := []byte{byte(vesc.CommBMSGetValues)}
+	resp := []byte{byte(CommBMSGetValues)}
 
 	// Pack voltage
-	resp = vesc.AppendFloat32(resp, b.TotalVoltage, 1e6)
+	resp = AppendFloat32(resp, b.TotalVoltage, 1e6)
 	// Pack current
-	resp = vesc.AppendFloat32(resp, b.CurrentIn, 1e6)
+	resp = AppendFloat32(resp, b.CurrentIn, 1e6)
 	// SOC (0-1)
-	resp = vesc.AppendFloat32(resp, b.SOC/100.0, 1e6)
+	resp = AppendFloat32(resp, b.SOC/100.0, 1e6)
 
 	// Cell count
 	resp = append(resp, byte(b.CellCount))
@@ -269,7 +268,7 @@ func (b *VESCBMS) buildBMSValuesResponse() []byte {
 	for i := 0; i < b.CellCount; i++ {
 		// Add slight variation between cells
 		v := b.CellVoltage + float64(i%3)*0.005 - 0.005
-		resp = vesc.AppendFloat16(resp, v, 1000)
+		resp = AppendFloat16(resp, v, 1000)
 	}
 
 	// Cell balancing bitmap (uint64 as 8 bytes, all off)
@@ -280,12 +279,12 @@ func (b *VESCBMS) buildBMSValuesResponse() []byte {
 	// Temp sensor count
 	resp = append(resp, 3)
 	// Temperatures
-	resp = vesc.AppendFloat16(resp, b.Temperature, 100)
-	resp = vesc.AppendFloat16(resp, b.Temperature+1.5, 100)
-	resp = vesc.AppendFloat16(resp, b.Temperature-0.5, 100)
+	resp = AppendFloat16(resp, b.Temperature, 100)
+	resp = AppendFloat16(resp, b.Temperature+1.5, 100)
+	resp = AppendFloat16(resp, b.Temperature-0.5, 100)
 
 	// Humidity
-	resp = vesc.AppendFloat16(resp, 35.0, 100)
+	resp = AppendFloat16(resp, 35.0, 100)
 
 	return resp
 }
@@ -294,31 +293,31 @@ func (b *VESCBMS) buildBMSValuesResponse() []byte {
 // The Express has no motor so most values are zero. It reports its own
 // controller ID and the shared bus voltage.
 func (ve *VESCExpress) buildGetValuesResponse() []byte {
-	resp := []byte{byte(vesc.CommGetValues)}
+	resp := []byte{byte(CommGetValues)}
 
-	resp = vesc.AppendFloat16(resp, 32.0, 10)  // temp_fet (ESP32 temp)
-	resp = vesc.AppendFloat16(resp, 0, 10)      // temp_motor (N/A)
-	resp = vesc.AppendFloat32(resp, 0, 100)      // avg_motor_current
-	resp = vesc.AppendFloat32(resp, 0, 100)      // avg_input_current
-	resp = vesc.AppendFloat32(resp, 0, 100)      // avg_id
-	resp = vesc.AppendFloat32(resp, 0, 100)      // avg_iq
-	resp = vesc.AppendFloat16(resp, 0, 1000)     // duty_cycle
-	resp = vesc.AppendFloat32(resp, 0, 1)        // rpm
-	resp = vesc.AppendFloat16(resp, 63.0, 10)    // input_voltage (bus voltage)
-	resp = vesc.AppendFloat32(resp, 0, 10000)    // amp_hours
-	resp = vesc.AppendFloat32(resp, 0, 10000)    // amp_hours_charged
-	resp = vesc.AppendFloat32(resp, 0, 10000)    // watt_hours
-	resp = vesc.AppendFloat32(resp, 0, 10000)    // watt_hours_charged
-	resp = vesc.AppendInt32(resp, 0)              // tachometer
-	resp = vesc.AppendInt32(resp, 0)              // tachometer_abs
+	resp = AppendFloat16(resp, 32.0, 10)  // temp_fet (ESP32 temp)
+	resp = AppendFloat16(resp, 0, 10)      // temp_motor (N/A)
+	resp = AppendFloat32(resp, 0, 100)      // avg_motor_current
+	resp = AppendFloat32(resp, 0, 100)      // avg_input_current
+	resp = AppendFloat32(resp, 0, 100)      // avg_id
+	resp = AppendFloat32(resp, 0, 100)      // avg_iq
+	resp = AppendFloat16(resp, 0, 1000)     // duty_cycle
+	resp = AppendFloat32(resp, 0, 1)        // rpm
+	resp = AppendFloat16(resp, 63.0, 10)    // input_voltage (bus voltage)
+	resp = AppendFloat32(resp, 0, 10000)    // amp_hours
+	resp = AppendFloat32(resp, 0, 10000)    // amp_hours_charged
+	resp = AppendFloat32(resp, 0, 10000)    // watt_hours
+	resp = AppendFloat32(resp, 0, 10000)    // watt_hours_charged
+	resp = AppendInt32(resp, 0)              // tachometer
+	resp = AppendInt32(resp, 0)              // tachometer_abs
 	resp = append(resp, 0)                        // fault_code = none
-	resp = vesc.AppendFloat32(resp, 0, 1000000)  // pid_pos_now
+	resp = AppendFloat32(resp, 0, 1000000)  // pid_pos_now
 	resp = append(resp, ve.ControllerID)          // controller_id
-	resp = vesc.AppendFloat16(resp, 32.0, 10)    // temp_mos1
-	resp = vesc.AppendFloat16(resp, 32.0, 10)    // temp_mos2
-	resp = vesc.AppendFloat16(resp, 32.0, 10)    // temp_mos3
-	resp = vesc.AppendFloat32(resp, 0, 1000)     // avg_vd
-	resp = vesc.AppendFloat32(resp, 0, 1000)     // avg_vq
+	resp = AppendFloat16(resp, 32.0, 10)    // temp_mos1
+	resp = AppendFloat16(resp, 32.0, 10)    // temp_mos2
+	resp = AppendFloat16(resp, 32.0, 10)    // temp_mos3
+	resp = AppendFloat32(resp, 0, 1000)     // avg_vd
+	resp = AppendFloat32(resp, 0, 1000)     // avg_vq
 	resp = append(resp, 0)                        // status
 
 	return resp

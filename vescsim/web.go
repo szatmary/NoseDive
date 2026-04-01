@@ -1,4 +1,4 @@
-package simulator
+package main
 
 import (
 	"bufio"
@@ -17,8 +17,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/szatmary/nosedive/pkg/refloat"
-	"github.com/szatmary/nosedive/pkg/vesc"
 )
 
 //go:embed web/*
@@ -186,10 +184,10 @@ func (s *Simulator) SetState(field string, value json.RawMessage) error {
 		s.state.Footpad = fp
 		s.state.ADC1 = 0
 		s.state.ADC2 = 0
-		if fp == refloat.FootpadLeft || fp == refloat.FootpadBoth {
+		if fp == FootpadLeft || fp == FootpadBoth {
 			s.state.ADC1 = 3.0
 		}
-		if fp == refloat.FootpadRight || fp == refloat.FootpadBoth {
+		if fp == FootpadRight || fp == FootpadBoth {
 			s.state.ADC2 = 3.0
 		}
 	case "runState":
@@ -218,67 +216,67 @@ func (s *Simulator) SetState(field string, value json.RawMessage) error {
 	return nil
 }
 
-func parseFootpad(s string) refloat.FootpadState {
+func parseFootpad(s string) FootpadState {
 	switch strings.ToUpper(s) {
 	case "NONE":
-		return refloat.FootpadNone
+		return FootpadNone
 	case "LEFT":
-		return refloat.FootpadLeft
+		return FootpadLeft
 	case "RIGHT":
-		return refloat.FootpadRight
+		return FootpadRight
 	case "BOTH":
-		return refloat.FootpadBoth
+		return FootpadBoth
 	default:
-		return refloat.FootpadNone
+		return FootpadNone
 	}
 }
 
-func parseRunState(s string) refloat.RunState {
+func parseRunState(s string) RunState {
 	switch strings.ToUpper(s) {
 	case "DISABLED":
-		return refloat.StateDisabled
+		return StateDisabled
 	case "STARTUP":
-		return refloat.StateStartup
+		return StateStartup
 	case "READY":
-		return refloat.StateReady
+		return StateReady
 	case "RUNNING":
-		return refloat.StateRunning
+		return StateRunning
 	default:
-		return refloat.StateReady
+		return StateReady
 	}
 }
 
-func parseMode(s string) refloat.Mode {
+func parseMode(s string) Mode {
 	switch strings.ToUpper(s) {
 	case "NORMAL":
-		return refloat.ModeNormal
+		return ModeNormal
 	case "HANDTEST":
-		return refloat.ModeHandtest
+		return ModeHandtest
 	case "FLYWHEEL":
-		return refloat.ModeFlywheel
+		return ModeFlywheel
 	default:
-		return refloat.ModeNormal
+		return ModeNormal
 	}
 }
 
-func parseFault(s string) vesc.FaultCode {
+func parseFault(s string) FaultCode {
 	switch strings.ToUpper(s) {
 	case "NONE":
-		return vesc.FaultNone
+		return FaultNone
 	case "OVER_VOLTAGE":
-		return vesc.FaultOverVoltage
+		return FaultOverVoltage
 	case "UNDER_VOLTAGE":
-		return vesc.FaultUnderVoltage
+		return FaultUnderVoltage
 	case "DRV":
-		return vesc.FaultDRV
+		return FaultDRV
 	case "ABS_OVER_CURRENT":
-		return vesc.FaultAbsOverCurrent
+		return FaultAbsOverCurrent
 	case "OVER_TEMP_FET":
-		return vesc.FaultOverTempFET
+		return FaultOverTempFET
 	case "OVER_TEMP_MOTOR":
-		return vesc.FaultOverTempMotor
+		return FaultOverTempMotor
 	default:
-		return vesc.FaultNone
+		return FaultNone
 	}
 }
 

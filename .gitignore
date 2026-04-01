@@ -1,2 +1,6 @@
 # Build artifacts
 lib/nosedive/build/
+third_party/
+.claude/
+ios/NoseDive/.build/
+vescsim_state.json

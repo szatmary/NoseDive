@@ -1,4 +1,4 @@
-package refloat
+package main
 
 const PackageMagic byte = 101 // 0x65 - Refloat package ID
 
@@ -223,16 +223,16 @@ type RTData struct {
 	RemoteInput float64
 
 	// Runtime setpoints (only valid when running)
-	Setpoint          float64
-	ATRSetpoint       float64
-	BrakeTiltSetpoint float64
+	Setpoint           float64
+	ATRSetpoint        float64
+	BrakeTiltSetpoint  float64
 	TorqueTiltSetpoint float64
-	TurnTiltSetpoint  float64
-	RemoteSetpoint    float64
-	BalanceCurrent    float64
-	ATRAccelDiff      float64
-	ATRSpeedBoost     float64
-	BoosterCurrent    float64
+	TurnTiltSetpoint   float64
+	RemoteSetpoint     float64
+	BalanceCurrent     float64
+	ATRAccelDiff       float64
+	ATRSpeedBoost      float64
+	BoosterCurrent     float64
 }
 
 // PackageInfo holds Refloat package version info from COMMAND_INFO.

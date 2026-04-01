@@ -1,4 +1,4 @@
-package simulator
+package main
 
 import (
 	"bytes"
@@ -8,7 +8,6 @@ import (
 	"log"
 	"strconv"
 
-	"github.com/szatmary/nosedive/pkg/vesc"
 )
 
 //go:embed refloat_settings.xml
@@ -19,6 +18,33 @@ var mcconfDefaultXML []byte
 
 //go:embed appconf_default.xml
 var appconfDefaultXML []byte
+
+//go:embed refloat_ui.qml
+var refloatQMLRaw []byte
+
+// compressedRefloatQML is the Qt qCompress format: 4-byte big-endian
+// uncompressed size + zlib data. This matches qUncompress() in VESC Tool.
+var compressedRefloatQML []byte
+
+func init() {
+	compressedRefloatQML = qtCompress(refloatQMLRaw)
+}
+
+// qtCompress produces Qt's qCompress format: [uncompressed_size:4BE][zlib_data]
+func qtCompress(data []byte) []byte {
+	var buf bytes.Buffer
+	// 4-byte big-endian uncompressed size (Qt format)
+	size := uint32(len(data))
+	buf.WriteByte(byte(size >> 24))
+	buf.WriteByte(byte(size >> 16))
+	buf.WriteByte(byte(size >> 8))
+	buf.WriteByte(byte(size))
+	// zlib compressed data
+	w := zlib.NewWriter(&buf)
+	w.Write(data)
+	w.Close()
+	return buf.Bytes()
+}
 
 // compressConfigXML compresses the XML using zlib and prepends the
 // 3-byte big-endian uncompressed length, matching VESC's confxml.c wire format.
@@ -119,17 +145,16 @@ func (c *configParams) UnmarshalXML(d *xml.Decoder, start xml.StartElement) erro
 //   - type=5 (bool): uint8 (1 byte)
 //   - type=6 (bitfield): uint8 (1 byte)
 //   - type=3 (string): skipped
-func generateDefaultConfig(xmlData []byte) []byte {
+func generateDefaultConfig(xmlData []byte, signature uint32) []byte {
 	var cfg configParams
 	if err := xml.Unmarshal(xmlData, &cfg); err != nil {
 		log.Printf("simulator: failed to parse config XML: %v", err)
 		return nil
 	}
 
-	// Start with 4-byte signature (CRC of XML)
-	sig := vesc.CRC16(xmlData)
+	// Start with 4-byte signature
 	var buf []byte
-	buf = vesc.AppendUint32(buf, uint32(sig)<<16|uint32(sig))
+	buf = AppendUint32(buf, signature)
 
 	for _, p := range cfg.Params {
 		// Skip non-transmittable params
@@ -150,13 +175,13 @@ func generateDefaultConfig(xmlData []byte) []byte {
 			case 2: // INT8
 				buf = append(buf, uint8(int8(parseInt32(p.ValInt))))
 			case 3: // UINT16
-				buf = vesc.AppendUint16(buf, uint16(parseInt32(p.ValInt)))
+				buf = AppendUint16(buf, uint16(parseInt32(p.ValInt)))
 			case 4: // INT16
-				buf = vesc.AppendInt16(buf, int16(parseInt32(p.ValInt)))
+				buf = AppendInt16(buf, int16(parseInt32(p.ValInt)))
 			case 5: // UINT32
-				buf = vesc.AppendUint32(buf, uint32(parseInt32(p.ValInt)))
+				buf = AppendUint32(buf, uint32(parseInt32(p.ValInt)))
 			case 6: // INT32
-				buf = vesc.AppendInt32(buf, parseInt32(p.ValInt))
+				buf = AppendInt32(buf, parseInt32(p.ValInt))
 			default: // default: uint8
 				buf = append(buf, uint8(parseInt32(p.ValInt)))
 			}
@@ -164,14 +189,14 @@ func generateDefaultConfig(xmlData []byte) []byte {
 			switch vtx {
 			case 7: // DOUBLE16: int16(val * scale), 2 bytes
 				scale := parseFloat64(p.VTxDoubleScale)
-				buf = vesc.AppendInt16(buf, int16(parseFloat64(p.ValDouble)*scale))
+				buf = AppendInt16(buf, int16(parseFloat64(p.ValDouble)*scale))
 			case 8: // DOUBLE32: int32(val * scale), 4 bytes
 				scale := parseFloat64(p.VTxDoubleScale)
-				buf = vesc.AppendInt32(buf, int32(parseFloat64(p.ValDouble)*scale))
+				buf = AppendInt32(buf, int32(parseFloat64(p.ValDouble)*scale))
 			case 9: // DOUBLE32_AUTO: IEEE754 float32, 4 bytes
-				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
+				buf = AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
 			default: // fallback: float32_auto
-				buf = vesc.AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
+				buf = AppendFloat32Auto(buf, parseFloat64(p.ValDouble))
 			}
 		case 3: // string → skip
 			continue
@@ -213,14 +238,20 @@ func parseFloat64(s string) float64 {
 	return v
 }
 
+// FW 6.05 config signatures from confgenerator.h (vedderb/bldc release_6_05)
+const (
+	MCConfSignature605  uint32 = 1065524471
+	AppConfSignature605 uint32 = 2099347128
+)
+
 // generateDefaultMCConf creates a motor controller config blob from the
 // embedded MC_CONF XML (parameters_mcconf.xml for FW 6.05).
 func generateDefaultMCConf() []byte {
-	return generateDefaultConfig(mcconfDefaultXML)
+	return generateDefaultConfig(mcconfDefaultXML, MCConfSignature605)
 }
 
 // generateDefaultAppConf creates an app config blob from the
 // embedded APP_CONF XML (parameters_appconf.xml for FW 6.05).
 func generateDefaultAppConf() []byte {
-	return generateDefaultConfig(appconfDefaultXML)
+	return generateDefaultConfig(appconfDefaultXML, AppConfSignature605)
 }

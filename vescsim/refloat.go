@@ -1,9 +1,8 @@
-package refloat
+package main
 
 import (
 	"fmt"
 
-	"github.com/szatmary/nosedive/pkg/vesc"
 )
 
 // parseAllData decodes COMMAND_GET_ALLDATA (10) response.
@@ -24,11 +23,11 @@ func parseAllData(data []byte, mode uint8) (*RTData, error) {
 	}
 
 	// Bytes 1-2: balance_current (float16, scale=10)
-	rt.BalanceCurrent = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.BalanceCurrent = float64(GetInt16(data, &idx)) / 10.0
 	// Bytes 3-4: balance_pitch (float16, scale=10)
-	rt.BalancePitch = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.BalancePitch = float64(GetInt16(data, &idx)) / 10.0
 	// Bytes 5-6: roll (float16, scale=10)
-	rt.Roll = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.Roll = float64(GetInt16(data, &idx)) / 10.0
 
 	// Byte 7: (state_compat & 0xF) | (sat_compat << 4)
 	stateByte := data[idx]
@@ -66,26 +65,26 @@ func parseAllData(data []byte, mode uint8) (*RTData, error) {
 	idx++
 
 	// Bytes 17-18: pitch (float16, scale=10)
-	rt.Pitch = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.Pitch = float64(GetInt16(data, &idx)) / 10.0
 
 	// Byte 19: booster current + 128
 	rt.BoosterCurrent = float64(data[idx]) - 128.0
 	idx++
 
 	// Bytes 20-21: battery voltage (float16, scale=10)
-	rt.BattVoltage = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.BattVoltage = float64(GetInt16(data, &idx)) / 10.0
 
 	// Bytes 22-23: erpm (int16)
-	rt.ERPM = float64(vesc.GetInt16(data, &idx))
+	rt.ERPM = float64(GetInt16(data, &idx))
 
 	// Bytes 24-25: speed m/s (float16, scale=10)
-	rt.Speed = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.Speed = float64(GetInt16(data, &idx)) / 10.0
 
 	// Bytes 26-27: motor current (float16, scale=10)
-	rt.MotorCurrent = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.MotorCurrent = float64(GetInt16(data, &idx)) / 10.0
 
 	// Bytes 28-29: battery current (float16, scale=10)
-	rt.BattCurrent = float64(vesc.GetInt16(data, &idx)) / 10.0
+	rt.BattCurrent = float64(GetInt16(data, &idx)) / 10.0
 
 	// Byte 30: duty * 100 + 128
 	rt.DutyCycle = (float64(data[idx]) - 128.0) / 100.0
@@ -121,9 +120,9 @@ func parseRTData(data []byte) (*RTData, error) {
 	rt := &RTData{}
 	idx := 0
 
-	rt.BalanceCurrent = vesc.GetFloat32Auto(data, &idx)
-	rt.BalancePitch = vesc.GetFloat32Auto(data, &idx)
-	rt.Roll = vesc.GetFloat32Auto(data, &idx)
+	rt.BalanceCurrent = GetFloat32Auto(data, &idx)
+	rt.BalancePitch = GetFloat32Auto(data, &idx)
+	rt.Roll = GetFloat32Auto(data, &idx)
 
 	// State byte: (state_compat & 0xF) | (sat_compat << 4)
 	stateByte := data[idx]
@@ -139,28 +138,28 @@ func parseRTData(data []byte) (*RTData, error) {
 	idx++
 	rt.State.Footpad = FootpadState(switchByte & 0x0F)
 
-	rt.ADC1 = vesc.GetFloat32Auto(data, &idx)
-	rt.ADC2 = vesc.GetFloat32Auto(data, &idx)
-	rt.Setpoint = vesc.GetFloat32Auto(data, &idx)
-	rt.ATRSetpoint = vesc.GetFloat32Auto(data, &idx)
-	rt.BrakeTiltSetpoint = vesc.GetFloat32Auto(data, &idx)
-	rt.TorqueTiltSetpoint = vesc.GetFloat32Auto(data, &idx)
-	rt.TurnTiltSetpoint = vesc.GetFloat32Auto(data, &idx)
-	rt.RemoteSetpoint = vesc.GetFloat32Auto(data, &idx)
-	rt.Pitch = vesc.GetFloat32Auto(data, &idx)
-	rt.FiltCurrent = vesc.GetFloat32Auto(data, &idx)
+	rt.ADC1 = GetFloat32Auto(data, &idx)
+	rt.ADC2 = GetFloat32Auto(data, &idx)
+	rt.Setpoint = GetFloat32Auto(data, &idx)
+	rt.ATRSetpoint = GetFloat32Auto(data, &idx)
+	rt.BrakeTiltSetpoint = GetFloat32Auto(data, &idx)
+	rt.TorqueTiltSetpoint = GetFloat32Auto(data, &idx)
+	rt.TurnTiltSetpoint = GetFloat32Auto(data, &idx)
+	rt.RemoteSetpoint = GetFloat32Auto(data, &idx)
+	rt.Pitch = GetFloat32Auto(data, &idx)
+	rt.FiltCurrent = GetFloat32Auto(data, &idx)
 
 	if idx+4 <= len(data) {
-		rt.ATRAccelDiff = vesc.GetFloat32Auto(data, &idx)
+		rt.ATRAccelDiff = GetFloat32Auto(data, &idx)
 	}
 	if idx+4 <= len(data) {
-		rt.BoosterCurrent = vesc.GetFloat32Auto(data, &idx)
+		rt.BoosterCurrent = GetFloat32Auto(data, &idx)
 	}
 	if idx+4 <= len(data) {
-		rt.DirCurrent = vesc.GetFloat32Auto(data, &idx)
+		rt.DirCurrent = GetFloat32Auto(data, &idx)
 	}
 	if idx+4 <= len(data) {
-		rt.RemoteInput = vesc.GetFloat32Auto(data, &idx)
+		rt.RemoteInput = GetFloat32Auto(data, &idx)
 	}
 
 	return rt, nil
@@ -227,3 +226,5 @@ func decodeSATCompat(v uint8) SetpointAdjustmentType {
 		return SATNone
 	}
 }
+
+// handleCustomAppData is in simulator.go (with all the response builders)
