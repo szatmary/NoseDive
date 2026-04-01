@@ -84,13 +84,12 @@ class BoardManager: ObservableObject {
 
     private func refreshFromEngine() {
         // Telemetry
-        var ct = nd_telemetry_t()
-        nd_engine_get_telemetry(engine, &ct)
+        let ct = nd_engine_get_telemetry(engine)
         telemetry = NoseDiveBridge.telemetryFromC(ct)
 
         // Active board
-        var cb = nd_board_t()
-        if nd_engine_get_active_board(engine, &cb) {
+        if nd_engine_has_active_board(engine) {
+            let cb = nd_engine_get_active_board(engine)
             activeBoard = NoseDiveBridge.boardFromC(cb)
         } else {
             activeBoard = nil
@@ -113,21 +112,15 @@ class BoardManager: ObservableObject {
 
     private func loadBoardsFromEngine() {
         let count = nd_engine_board_count(engine)
-        boards = (0..<count).compactMap { i in
-            var cb = nd_board_t()
-            guard nd_engine_get_board(engine, i, &cb) else { return nil }
-            return NoseDiveBridge.boardFromC(cb)
+        boards = (0..<count).map { i in
+            NoseDiveBridge.boardFromC(nd_engine_get_board(engine, i))
         }
     }
 
     private func loadProfilesFromEngine() {
         let count = nd_engine_profile_count(engine)
-        var loaded: [RiderProfile] = []
-        for i in 0..<count {
-            var cp = nd_rider_profile_t()
-            if nd_engine_get_profile(engine, i, &cp) {
-                loaded.append(NoseDiveBridge.profileFromC(cp))
-            }
+        let loaded: [RiderProfile] = (0..<count).map { i in
+            NoseDiveBridge.profileFromC(nd_engine_get_profile(engine, i))
         }
         let userProfiles = loaded.filter { !$0.isBuiltIn }
         riderProfiles = RiderProfile.builtInPresets + userProfiles
@@ -265,8 +258,7 @@ class BoardManager: ObservableObject {
 
     func addProfile(_ profile: RiderProfile) {
         riderProfiles.append(profile)
-        var cp = NoseDiveBridge.profileToC(profile)
-        nd_engine_save_profile(engine, &cp)
+        nd_engine_save_profile(engine, NoseDiveBridge.profileToC(profile))
     }
 
     func updateProfile(_ profile: RiderProfile) {
@@ -276,15 +268,13 @@ class BoardManager: ObservableObject {
         if activeProfile.id == profile.id {
             activeProfile = profile
         }
-        var cp = NoseDiveBridge.profileToC(profile)
-        nd_engine_save_profile(engine, &cp)
+        nd_engine_save_profile(engine, NoseDiveBridge.profileToC(profile))
     }
 
     // MARK: - Board management
 
     func saveBoard(_ board: Board) {
-        var cb = NoseDiveBridge.boardToC(board)
-        nd_engine_save_board(engine, &cb)
+        nd_engine_save_board(engine, NoseDiveBridge.boardToC(board))
         loadBoardsFromEngine()
     }
 

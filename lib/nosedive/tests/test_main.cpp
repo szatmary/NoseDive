@@ -643,7 +643,7 @@ static void test_engine_ffi() {
     cb.battery_voltage_min = 60.0;
     cb.battery_voltage_max = 84.0;
     cb.wizard_complete = true;
-    nd_engine_save_board(e, &cb);
+    nd_engine_save_board(e, cb);
     ASSERT_EQ(nd_engine_board_count(e), 1u, "engine: 1 board");
 
     // Save a profile via engine
@@ -653,7 +653,7 @@ static void test_engine_ffi() {
     std::strncpy(cp.icon, "wind", sizeof(cp.icon) - 1);
     cp.responsiveness = 5.0;
     cp.stability = 5.0;
-    nd_engine_save_profile(e, &cp);
+    nd_engine_save_profile(e, cp);
     ASSERT_EQ(nd_engine_profile_count(e), 1u, "engine: 1 profile");
 
     nd_engine_set_active_profile_id(e, "ffi-profile-1");
@@ -665,16 +665,14 @@ static void test_engine_ffi() {
     ASSERT_EQ(nd_engine_board_count(e2), 1u, "engine: reloaded 1 board");
     ASSERT_EQ(nd_engine_profile_count(e2), 1u, "engine: reloaded 1 profile");
 
-    nd_board_t lb = {};
-    ASSERT(nd_engine_get_board(e2, 0, &lb), "engine: get_board");
+    nd_board_t lb = nd_engine_get_board(e2, 0);
     ASSERT_EQ(std::string(lb.id), "ffi-board-1", "engine: board id");
     ASSERT_EQ(std::string(lb.name), "Test Board", "engine: board name");
     ASSERT_EQ(lb.fw_major, 6, "engine: board fw_major");
     ASSERT(lb.wizard_complete, "engine: board wizard_complete");
     ASSERT_NEAR(lb.wheel_circumference_m, 0.88, 0.001, "engine: board wheel_circ");
 
-    nd_rider_profile_t lp = {};
-    ASSERT(nd_engine_get_profile(e2, 0, &lp), "engine: get_profile");
+    nd_rider_profile_t lp = nd_engine_get_profile(e2, 0);
     ASSERT_EQ(std::string(lp.id), "ffi-profile-1", "engine: profile id");
     ASSERT_EQ(std::string(lp.name), "Flow", "engine: profile name");
     ASSERT_NEAR(lp.responsiveness, 5.0, 0.01, "engine: profile responsiveness");
@@ -721,15 +719,13 @@ static void test_engine_payload() {
 
     ASSERT(nd_engine_has_active_board(e), "engine: has active board after FW");
 
-    nd_fw_version_t fw = {};
-    ASSERT(nd_engine_get_main_fw(e, &fw), "engine: get main fw");
+    nd_fw_version_t fw = nd_engine_get_main_fw(e);
     ASSERT_EQ(fw.major, 6, "engine: fw major");
     ASSERT_EQ(fw.minor, 5, "engine: fw minor");
     ASSERT_EQ(std::string(fw.hw_name), "TestHW", "engine: fw hw_name");
 
     // Telemetry should be zeroed initially
-    nd_telemetry_t tel = {};
-    nd_engine_get_telemetry(e, &tel);
+    nd_telemetry_t tel = nd_engine_get_telemetry(e);
     ASSERT_NEAR(tel.speed, 0.0, 0.001, "engine: initial speed 0");
 
     // Disconnect

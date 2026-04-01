@@ -164,21 +164,23 @@ void nd_engine_handle_payload(nd_engine_t* e, const uint8_t* data, size_t len) {
 
 // --- Telemetry ---
 
-void nd_engine_get_telemetry(const nd_engine_t* e, nd_telemetry_t* out) {
+nd_telemetry_t nd_engine_get_telemetry(const nd_engine_t* e) {
     auto t = e->engine.telemetry();
-    out->temp_mosfet     = t.temp_mosfet;
-    out->temp_motor      = t.temp_motor;
-    out->motor_current   = t.motor_current;
-    out->battery_current = t.battery_current;
-    out->duty_cycle      = t.duty_cycle;
-    out->erpm            = t.erpm;
-    out->battery_voltage = t.battery_voltage;
-    out->battery_percent = t.battery_percent;
-    out->speed           = t.speed;
-    out->power           = t.power;
-    out->tachometer      = t.tachometer;
-    out->tachometer_abs  = t.tachometer_abs;
-    out->fault           = static_cast<uint8_t>(t.fault);
+    nd_telemetry_t out{};
+    out.temp_mosfet     = t.temp_mosfet;
+    out.temp_motor      = t.temp_motor;
+    out.motor_current   = t.motor_current;
+    out.battery_current = t.battery_current;
+    out.duty_cycle      = t.duty_cycle;
+    out.erpm            = t.erpm;
+    out.battery_voltage = t.battery_voltage;
+    out.battery_percent = t.battery_percent;
+    out.speed           = t.speed;
+    out.power           = t.power;
+    out.tachometer      = t.tachometer;
+    out.tachometer_abs  = t.tachometer_abs;
+    out.fault           = static_cast<uint8_t>(t.fault);
+    return out;
 }
 
 double nd_engine_speed_kmh(const nd_engine_t* e) {
@@ -195,11 +197,11 @@ bool nd_engine_has_active_board(const nd_engine_t* e) {
     return e->engine.active_board().has_value();
 }
 
-bool nd_engine_get_active_board(const nd_engine_t* e, nd_board_t* out) {
+nd_board_t nd_engine_get_active_board(const nd_engine_t* e) {
+    nd_board_t out{};
     auto b = e->engine.active_board();
-    if (!b) return false;
-    board_to_c(*b, out);
-    return true;
+    if (b) board_to_c(*b, &out);
+    return out;
 }
 
 bool nd_engine_is_known_board(const nd_engine_t* e) {
@@ -227,18 +229,19 @@ uint8_t nd_engine_can_device_id(const nd_engine_t* e, size_t index) {
 
 // --- Firmware info ---
 
-bool nd_engine_get_main_fw(const nd_engine_t* e, nd_fw_version_t* out) {
+nd_fw_version_t nd_engine_get_main_fw(const nd_engine_t* e) {
+    nd_fw_version_t out{};
     auto fw = e->engine.main_fw();
-    if (!fw) return false;
-    std::memset(out, 0, sizeof(*out));
-    out->major = fw->major;
-    out->minor = fw->minor;
-    copy_str(out->hw_name, sizeof(out->hw_name), fw->hw_name);
-    copy_str(out->uuid, sizeof(out->uuid), fw->uuid);
-    out->hw_type = static_cast<uint8_t>(fw->hw_type);
-    out->custom_config_count = fw->custom_config_count;
-    copy_str(out->package_name, sizeof(out->package_name), fw->package_name);
-    return true;
+    if (fw) {
+        out.major = fw->major;
+        out.minor = fw->minor;
+        copy_str(out.hw_name, sizeof(out.hw_name), fw->hw_name);
+        copy_str(out.uuid, sizeof(out.uuid), fw->uuid);
+        out.hw_type = static_cast<uint8_t>(fw->hw_type);
+        out.custom_config_count = fw->custom_config_count;
+        copy_str(out.package_name, sizeof(out.package_name), fw->package_name);
+    }
+    return out;
 }
 
 // --- Refloat ---
@@ -247,16 +250,17 @@ bool nd_engine_has_refloat(const nd_engine_t* e) {
     return e->engine.has_refloat();
 }
 
-bool nd_engine_get_refloat_info(const nd_engine_t* e, nd_refloat_info_t* out) {
+nd_refloat_info_t nd_engine_get_refloat_info(const nd_engine_t* e) {
+    nd_refloat_info_t out{};
     auto info = e->engine.refloat_info();
-    if (!info) return false;
-    std::memset(out, 0, sizeof(*out));
-    copy_str(out->name, sizeof(out->name), info->name);
-    out->major = info->major;
-    out->minor = info->minor;
-    out->patch = info->patch;
-    copy_str(out->suffix, sizeof(out->suffix), info->suffix);
-    return true;
+    if (info) {
+        copy_str(out.name, sizeof(out.name), info->name);
+        out.major = info->major;
+        out.minor = info->minor;
+        out.patch = info->patch;
+        copy_str(out.suffix, sizeof(out.suffix), info->suffix);
+    }
+    return out;
 }
 
 bool nd_engine_refloat_installing(const nd_engine_t* e) {
@@ -287,15 +291,15 @@ size_t nd_engine_board_count(const nd_engine_t* e) {
     return e->engine.boards().size();
 }
 
-bool nd_engine_get_board(const nd_engine_t* e, size_t index, nd_board_t* out) {
+nd_board_t nd_engine_get_board(const nd_engine_t* e, size_t index) {
+    nd_board_t out{};
     auto boards = e->engine.boards();
-    if (index >= boards.size()) return false;
-    board_to_c(boards[index], out);
-    return true;
+    if (index < boards.size()) board_to_c(boards[index], &out);
+    return out;
 }
 
-void nd_engine_save_board(nd_engine_t* e, const nd_board_t* board) {
-    e->engine.save_board(board_from_c(board));
+void nd_engine_save_board(nd_engine_t* e, nd_board_t board) {
+    e->engine.save_board(board_from_c(&board));
 }
 
 void nd_engine_remove_board(nd_engine_t* e, const char* id) {
@@ -308,15 +312,15 @@ size_t nd_engine_profile_count(const nd_engine_t* e) {
     return e->engine.profiles().size();
 }
 
-bool nd_engine_get_profile(const nd_engine_t* e, size_t index, nd_rider_profile_t* out) {
+nd_rider_profile_t nd_engine_get_profile(const nd_engine_t* e, size_t index) {
+    nd_rider_profile_t out{};
     const auto& profiles = e->engine.profiles();
-    if (index >= profiles.size()) return false;
-    profile_to_c(profiles[index], out);
-    return true;
+    if (index < profiles.size()) profile_to_c(profiles[index], &out);
+    return out;
 }
 
-void nd_engine_save_profile(nd_engine_t* e, const nd_rider_profile_t* profile) {
-    e->engine.save_profile(profile_from_c(profile));
+void nd_engine_save_profile(nd_engine_t* e, nd_rider_profile_t profile) {
+    e->engine.save_profile(profile_from_c(&profile));
 }
 
 void nd_engine_remove_profile(nd_engine_t* e, const char* id) {

@@ -60,7 +60,7 @@ typedef struct {
     uint8_t fault;
 } nd_telemetry_t;
 
-void nd_engine_get_telemetry(const nd_engine_t* e, nd_telemetry_t* out);
+nd_telemetry_t nd_engine_get_telemetry(const nd_engine_t* e);
 double nd_engine_speed_kmh(const nd_engine_t* e);
 double nd_engine_speed_mph(const nd_engine_t* e);
 
@@ -88,7 +88,7 @@ typedef struct {
 
 // Returns true if there is an active board (connected).
 bool nd_engine_has_active_board(const nd_engine_t* e);
-bool nd_engine_get_active_board(const nd_engine_t* e, nd_board_t* out);
+nd_board_t nd_engine_get_active_board(const nd_engine_t* e);
 bool nd_engine_is_known_board(const nd_engine_t* e);
 // Returns NULL if can't guess. Returned string valid until next engine call.
 const char* nd_engine_guessed_board_type(const nd_engine_t* e);
@@ -108,7 +108,7 @@ typedef struct {
     char package_name[64];
 } nd_fw_version_t;
 
-bool nd_engine_get_main_fw(const nd_engine_t* e, nd_fw_version_t* out);
+nd_fw_version_t nd_engine_get_main_fw(const nd_engine_t* e);
 
 // --- Refloat ---
 bool nd_engine_has_refloat(const nd_engine_t* e);
@@ -121,7 +121,7 @@ typedef struct {
     char suffix[21];
 } nd_refloat_info_t;
 
-bool nd_engine_get_refloat_info(const nd_engine_t* e, nd_refloat_info_t* out);
+nd_refloat_info_t nd_engine_get_refloat_info(const nd_engine_t* e);
 bool nd_engine_refloat_installing(const nd_engine_t* e);
 bool nd_engine_refloat_installed(const nd_engine_t* e);
 void nd_engine_install_refloat(nd_engine_t* e);
@@ -132,8 +132,8 @@ void nd_engine_dismiss_wizard(nd_engine_t* e);
 
 // --- Board fleet (persisted) ---
 size_t nd_engine_board_count(const nd_engine_t* e);
-bool nd_engine_get_board(const nd_engine_t* e, size_t index, nd_board_t* out);
-void nd_engine_save_board(nd_engine_t* e, const nd_board_t* board);
+nd_board_t nd_engine_get_board(const nd_engine_t* e, size_t index);
+void nd_engine_save_board(nd_engine_t* e, nd_board_t board);
 void nd_engine_remove_board(nd_engine_t* e, const char* id);
 
 // --- Rider profiles (persisted) ---
@@ -155,8 +155,8 @@ typedef struct {
 } nd_rider_profile_t;
 
 size_t nd_engine_profile_count(const nd_engine_t* e);
-bool nd_engine_get_profile(const nd_engine_t* e, size_t index, nd_rider_profile_t* out);
-void nd_engine_save_profile(nd_engine_t* e, const nd_rider_profile_t* profile);
+nd_rider_profile_t nd_engine_get_profile(const nd_engine_t* e, size_t index);
+void nd_engine_save_profile(nd_engine_t* e, nd_rider_profile_t profile);
 void nd_engine_remove_profile(nd_engine_t* e, const char* id);
 
 const char* nd_engine_active_profile_id(const nd_engine_t* e);
