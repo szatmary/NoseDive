@@ -136,7 +136,10 @@ struct SetupWizardView: View {
             boardManager.activeBoard = board
             if !boardManager.boards.contains(where: { $0.id == board.id }) {
                 boardManager.boards.append(board)
+            } else if let idx = boardManager.boards.firstIndex(where: { $0.id == board.id }) {
+                boardManager.boards[idx] = board
             }
+            boardManager.saveToDisk()
         }
     }
 }
