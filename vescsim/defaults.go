@@ -149,7 +149,7 @@ func generateDefaultConfig(xmlData []byte, signature uint32) []byte {
 	var cfg configParams
 	if err := xml.Unmarshal(xmlData, &cfg); err != nil {
 		log.Printf("simulator: failed to parse config XML: %v", err)
-		return nil
+		return []byte{}
 	}
 
 	// Start with 4-byte signature

@@ -362,24 +362,40 @@ func AppendFloat32(buf []byte, v float64, scale float64) []byte {
 }
 
 func GetInt16(buf []byte, idx *int) int16 {
+	if *idx+2 > len(buf) {
+		*idx = len(buf)
+		return 0
+	}
 	v := int16(buf[*idx])<<8 | int16(buf[*idx+1])
 	*idx += 2
 	return v
 }
 
 func GetUint16(buf []byte, idx *int) uint16 {
+	if *idx+2 > len(buf) {
+		*idx = len(buf)
+		return 0
+	}
 	v := uint16(buf[*idx])<<8 | uint16(buf[*idx+1])
 	*idx += 2
 	return v
 }
 
 func GetInt32(buf []byte, idx *int) int32 {
+	if *idx+4 > len(buf) {
+		*idx = len(buf)
+		return 0
+	}
 	v := int32(binary.BigEndian.Uint32(buf[*idx:]))
 	*idx += 4
 	return v
 }
 
 func GetUint32(buf []byte, idx *int) uint32 {
+	if *idx+4 > len(buf) {
+		*idx = len(buf)
+		return 0
+	}
 	v := binary.BigEndian.Uint32(buf[*idx:])
 	*idx += 4
 	return v
@@ -396,6 +412,10 @@ func GetFloat32(buf []byte, scale float64, idx *int) float64 {
 // GetFloat32Auto decodes VESC's float32_auto format: IEEE754 float32, big-endian (4 bytes).
 // Despite the name "auto", this is equivalent to a standard IEEE754 float32.
 func GetFloat32Auto(buf []byte, idx *int) float64 {
+	if *idx+4 > len(buf) {
+		*idx = len(buf)
+		return 0
+	}
 	bits := binary.BigEndian.Uint32(buf[*idx:])
 	*idx += 4
 	return float64(math.Float32frombits(bits))
@@ -411,6 +431,9 @@ func AppendFloat32Auto(buf []byte, v float64) []byte {
 }
 
 func GetString(buf []byte, idx *int) string {
+	if *idx >= len(buf) {
+		return ""
+	}
 	start := *idx
 	for *idx < len(buf) && buf[*idx] != 0 {
 		*idx++
@@ -444,6 +467,9 @@ func ParseValues(data []byte) (*Values, error) {
 	v.WattHoursCharged = GetFloat32(data, 10000, &idx)
 	v.Tachometer = GetInt32(data, &idx)
 	v.TachometerAbs = GetInt32(data, &idx)
+	if idx >= len(data) {
+		return nil, fmt.Errorf("COMM_GET_VALUES response truncated at fault code (idx=%d, len=%d)", idx, len(data))
+	}
 	v.Fault = FaultCode(data[idx])
 	return v, nil
 }

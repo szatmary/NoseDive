@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 )
@@ -17,10 +18,11 @@ import (
 type Simulator struct {
 	listener   net.Listener
 	mu         sync.Mutex
+	wg         sync.WaitGroup // tracks background goroutines for clean shutdown
 	state      *BoardState
 	profile    *Profile // Optional board profile
 	canDevices []CANDevice    // Devices on the simulated CAN bus
-	running    bool
+	running    atomic.Bool
 	stop       chan struct{}
 	bleName    string // BLE device name (empty = no BLE)
 	webAddr    string // Web GUI address
@@ -258,12 +260,18 @@ func (s *Simulator) Start(addr string) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", addr, err)
 	}
-	s.running = true
+	s.running.Store(true)
 
 	// Start physics simulation
-	go s.physicsLoop()
-
-	go s.acceptLoop()
+	s.wg.Add(2)
+	go func() {
+		defer s.wg.Done()
+		s.physicsLoop()
+	}()
+	go func() {
+		defer s.wg.Done()
+		s.acceptLoop()
+	}()
 	return nil
 }
 
@@ -275,13 +283,14 @@ func (s *Simulator) Addr() string {
 	return s.listener.Addr().String()
 }
 
-// Stop shuts down the simulator.
+// Stop shuts down the simulator and waits for background goroutines to finish.
 func (s *Simulator) Stop() {
-	s.running = false
+	s.running.Store(false)
 	close(s.stop)
 	if s.listener != nil {
 		s.listener.Close()
 	}
+	s.wg.Wait()
 }
 
 // State returns a snapshot of the current board state.
@@ -332,16 +341,28 @@ func (s *Simulator) SetRunState(state RunState) {
 	s.state.RunState = state
 }
 
+const maxConnections = 100
+
 func (s *Simulator) acceptLoop() {
-	for s.running {
+	connSem := make(chan struct{}, maxConnections)
+	for s.running.Load() {
 		conn, err := s.listener.Accept()
 		if err != nil {
-			if s.running {
+			if s.running.Load() {
 				log.Printf("simulator: accept error: %v", err)
 			}
 			return
 		}
-		go s.handleConn(conn)
+		select {
+		case connSem <- struct{}{}:
+			go func(c net.Conn) {
+				defer func() { <-connSem }()
+				s.handleConn(c)
+			}(conn)
+		default:
+			log.Printf("simulator: max connections reached, rejecting %s", conn.RemoteAddr())
+			conn.Close()
+		}
 	}
 }
 
@@ -349,7 +370,7 @@ func (s *Simulator) handleConn(conn net.Conn) {
 	defer conn.Close()
 	log.Printf("simulator: client connected from %s", conn.RemoteAddr())
 
-	for s.running {
+	for s.running.Load() {
 		payload, err := DecodePacket(conn)
 		if err != nil {
 			if err != io.EOF {
@@ -1026,6 +1047,9 @@ func (s *Simulator) updatePhysics() {
 	}
 
 	// ERPM per m/s = polePairs * 60 / wheelCircumM
+	if st.MotorPolePairs <= 0 || st.WheelCircumM <= 0 {
+		return // skip physics tick if motor/wheel not configured
+	}
 	erpmPerMPS := float64(st.MotorPolePairs) * 60.0 / st.WheelCircumM
 
 	// State machine

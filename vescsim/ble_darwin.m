@@ -134,6 +134,8 @@ void bleInit(const char *name, const char *serviceUUID, const char *rxUUID, cons
     _peripheral.manager = [[CBPeripheralManager alloc] initWithDelegate:_peripheral queue:q];
 }
 
+static const NSUInteger kMaxTxQueueSize = 256;
+
 int bleSendNotification(const void *data, int len) {
     if (!_peripheral || !_peripheral.subscribedCentral || !_peripheral.txChar) {
         return -1;
@@ -143,6 +145,9 @@ int bleSendNotification(const void *data, int len) {
         forCharacteristic:_peripheral.txChar
         onSubscribedCentrals:nil];
     if (!ok) {
+        if (_peripheral.txQueue.count >= kMaxTxQueueSize) {
+            return -2; // queue full — apply backpressure
+        }
         // Queue it for later — will be drained by peripheralManagerIsReadyToUpdateSubscribers
         [_peripheral.txQueue addObject:nsdata];
     }

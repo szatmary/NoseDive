@@ -95,11 +95,10 @@ func logRx(payload []byte) {
 		logRxCustomAppData(name, payload)
 	case CommGetCustomConfigXML:
 		if len(payload) >= 10 {
-			idx := 1
-			confInd := payload[idx]; idx++
+			idx := 2
 			_ = GetInt32(payload, &idx) // requestLen
 			offset := GetInt32(payload, &idx)
-			log.Printf("← %s conf=%d offset=%d", name, confInd, offset)
+			log.Printf("← %s conf=%d offset=%d", name, payload[1], offset)
 		} else {
 			log.Printf("← %s len=%d", name, len(payload))
 		}

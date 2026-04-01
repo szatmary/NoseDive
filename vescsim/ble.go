@@ -87,7 +87,12 @@ func processBLEBuffer() {
 	for bleRxBuf.Len() > 0 {
 		data := bleRxBuf.Bytes()
 		pktLen, ok := peekPacketLen(data)
-		if !ok || bleRxBuf.Len() < pktLen {
+		if !ok {
+			// Invalid start byte — discard one byte and retry
+			bleRxBuf.ReadByte()
+			continue
+		}
+		if bleRxBuf.Len() < pktLen {
 			return
 		}
 
@@ -133,10 +138,12 @@ func processBLEBuffer() {
 
 // StartBLE starts the BLE GATT server emulating a VESC Express using CoreBluetooth.
 func (s *Simulator) StartBLE(name string) error {
+	s.mu.Lock()
 	s.bleName = name
 	if s.bleName == "" {
 		s.bleName = "VESC SIM"
 	}
+	s.mu.Unlock()
 
 	bleSim = s
 
@@ -177,8 +184,13 @@ func peekPacketLen(data []byte) (int, bool) {
 		if len(data) < 3 {
 			return 0, false
 		}
-		return 1 + 2 + (int(data[1])<<8 | int(data[2])) + 2 + 1, true
+		payloadLen := int(data[1])<<8 | int(data[2])
+		if payloadLen == 0 || payloadLen > maxPayloadSize {
+			return 0, false
+		}
+		return 1 + 2 + payloadLen + 2 + 1, true
 	default:
-		return 1, true
+		// Invalid start byte — skip it so the caller can resync
+		return 0, false
 	}
 }

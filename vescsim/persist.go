@@ -43,12 +43,13 @@ func (s *Simulator) SaveState(path string) error {
 
 // persistState saves state if a statePath is configured. Called with lock held.
 func (s *Simulator) persistState() {
-	if s.statePath == "" {
+	path := s.statePath // snapshot while lock is held by caller
+	if path == "" {
 		return
 	}
 	// Save in background to avoid blocking command handling
 	go func() {
-		if err := s.SaveState(s.statePath); err != nil {
+		if err := s.SaveState(path); err != nil {
 			log.Printf("persist: save error: %v", err)
 		}
 	}()

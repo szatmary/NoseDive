@@ -36,7 +36,10 @@ func main() {
 	if *fresh {
 		// Fresh board: random UUID, default configs, idle state, delete saved state
 		var uuid [12]byte
-		rand.Read(uuid[:])
+		if _, err := rand.Read(uuid[:]); err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to generate UUID: %v\n", err)
+			os.Exit(1)
+		}
 		sim.SetUUID(uuid)
 		sim.SetFootpad(FootpadNone)
 		sim.SetRunState(StateReady)
