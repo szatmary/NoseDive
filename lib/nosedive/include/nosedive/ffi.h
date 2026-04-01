@@ -24,6 +24,9 @@ typedef void (*nd_engine_send_cb)(const uint8_t* payload, size_t len, void* ctx)
 // Callback: engine state changed (platform should refresh UI).
 typedef void (*nd_engine_state_cb)(void* ctx);
 
+// Callback: engine diagnostic message (unknown commands, parse failures).
+typedef void (*nd_engine_error_cb)(const char* message, void* ctx);
+
 // Create engine with storage path. Loads persisted data.
 nd_engine_t* nd_engine_create(const char* storage_path);
 void nd_engine_destroy(nd_engine_t* e);
@@ -31,6 +34,7 @@ void nd_engine_destroy(nd_engine_t* e);
 // Set callbacks (call before connecting).
 void nd_engine_set_send_callback(nd_engine_t* e, nd_engine_send_cb cb, void* ctx);
 void nd_engine_set_state_callback(nd_engine_t* e, nd_engine_state_cb cb, void* ctx);
+void nd_engine_set_error_callback(nd_engine_t* e, nd_engine_error_cb cb, void* ctx);
 
 // Connection lifecycle — engine sends discovery commands on connect.
 void nd_engine_on_connected(nd_engine_t* e);

@@ -31,6 +31,7 @@ class BoardManager: ObservableObject {
     // Transport
     private var bleService: BLEService?
     private var tcpTransport: TCPTransport?
+    private var bleTransport: OpaquePointer? // nd_transport_t* for BLE packet framing
     private var activeTransport: TransportKind = .none
 
     enum TransportKind {
@@ -142,12 +143,16 @@ class BoardManager: ObservableObject {
     // MARK: - Transport send
 
     private func sendToTransport(_ data: Data) {
-        let packet = VESCPacket.encode(data)
         switch activeTransport {
-        case .tcp:
-            tcpTransport?.sendRaw(packet)
         case .ble:
-            bleService?.send(packet)
+            // Route through C++ transport — handles framing + MTU chunking
+            guard let transport = bleTransport else { return }
+            data.withUnsafeBytes { buf in
+                guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                nd_transport_send_payload(transport, ptr, buf.count)
+            }
+        case .tcp:
+            tcpTransport?.send(data)
         case .none:
             break
         }
@@ -177,7 +182,42 @@ class BoardManager: ObservableObject {
         stopScan()
         connectionState = .connecting(device.name)
         activeTransport = .ble
+        setupBLETransport()
         bleService?.connect(to: device.identifier)
+    }
+
+    private func setupBLETransport() {
+        teardownBLETransport()
+        let transport = nd_transport_create(20) // default MTU
+        bleTransport = transport
+
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+
+        // Transport send callback → write raw BLE chunks
+        nd_transport_set_send_callback(transport, { data, len, ctx in
+            guard let ctx, let data else { return }
+            let chunk = Data(bytes: data, count: len)
+            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
+            Task { @MainActor in
+                mgr.bleService?.send(chunk)
+            }
+        }, selfPtr)
+
+        // Transport packet callback → complete VESC payload → engine
+        nd_transport_set_packet_callback(transport, { payload, len, ctx in
+            guard let ctx, let payload else { return }
+            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
+            Task { @MainActor in
+                nd_engine_handle_payload(mgr.engine, payload, len)
+            }
+        }, selfPtr)
+    }
+
+    private func teardownBLETransport() {
+        if let transport = bleTransport {
+            nd_transport_destroy(transport)
+            bleTransport = nil
+        }
     }
 
     // MARK: - TCP Connection
@@ -201,6 +241,7 @@ class BoardManager: ObservableObject {
     func disconnect() {
         switch activeTransport {
         case .ble:
+            teardownBLETransport()
             bleService?.disconnect()
         case .tcp:
             tcpTransport?.stopPolling()
@@ -301,12 +342,18 @@ class BoardManager: ObservableObject {
             connectionState = .connected
             nd_engine_on_connected(engine)
         case .disconnected:
+            teardownBLETransport()
             connectionState = .disconnected
             activeTransport = .none
             nd_engine_on_disconnected(engine)
             refreshFromEngine()
-        case .telemetry, .refloat:
-            break // Engine handles these via payload dispatch
+        case .data(let rawData):
+            // Feed raw BLE bytes to C++ transport for packet reassembly
+            guard let transport = bleTransport else { return }
+            rawData.withUnsafeBytes { buf in
+                guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+                nd_transport_receive(transport, ptr, buf.count)
+            }
         }
     }
 

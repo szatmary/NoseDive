@@ -18,6 +18,11 @@ void Engine::set_state_callback(StateCallback cb) {
     state_cb_ = std::move(cb);
 }
 
+void Engine::set_error_callback(ErrorCallback cb) {
+    std::lock_guard lock(mu_);
+    error_cb_ = std::move(cb);
+}
+
 Telemetry Engine::telemetry() const {
     std::lock_guard lock(mu_);
     return telemetry_;
@@ -46,15 +51,16 @@ void Engine::dismiss_wizard() {
 // --- Connection lifecycle ---
 
 void Engine::on_connected() {
-    std::lock_guard lock(mu_);
+    std::unique_lock lock(mu_);
     // Discovery sequence: FW version → CAN scan → Refloat info
-    send_payload(build_command(CommPacketID::FWVersion));
-    send_payload(build_command(CommPacketID::PingCAN));
-    send_payload(build_refloat_info_request());
+    queue_send(build_command(CommPacketID::FWVersion));
+    queue_send(build_command(CommPacketID::PingCAN));
+    queue_send(build_refloat_info_request());
+    flush_pending(lock);
 }
 
 void Engine::on_disconnected() {
-    std::lock_guard lock(mu_);
+    std::unique_lock lock(mu_);
     telemetry_ = {};
     active_board_ = std::nullopt;
     main_fw_ = std::nullopt;
@@ -67,14 +73,15 @@ void Engine::on_disconnected() {
     refloat_installed_ = false;
     show_wizard_ = false;
     guessed_type_cache_.clear();
-    notify_state_changed();
+    queue_notify();
+    flush_pending(lock);
 }
 
 // --- Payload dispatch ---
 
 void Engine::handle_payload(const uint8_t* data, size_t len) {
     if (len == 0) return;
-    std::lock_guard lock(mu_);
+    std::unique_lock lock(mu_);
 
     auto cmd = data[0];
     switch (cmd) {
@@ -93,9 +100,13 @@ void Engine::handle_payload(const uint8_t* data, size_t len) {
         case static_cast<uint8_t>(CommPacketID::WriteNewAppData):
             handle_write_new_app_data();
             break;
-        default:
+        default: {
+            std::string msg = "unknown command: " + std::to_string(cmd);
+            pending_errors_.push_back(std::move(msg));
             break;
+        }
     }
+    flush_pending(lock);
 }
 
 // --- Individual handlers ---
@@ -132,7 +143,7 @@ void Engine::handle_values(const uint8_t* data, size_t len) {
             active_board_->battery_voltage_max);
     }
 
-    notify_state_changed();
+    queue_notify();
 }
 
 void Engine::handle_fw_version(const uint8_t* data, size_t len) {
@@ -151,7 +162,7 @@ void Engine::handle_fw_version(const uint8_t* data, size_t len) {
         handle_fw_info(*fw);
     }
 
-    notify_state_changed();
+    queue_notify();
 }
 
 void Engine::handle_fw_info(const FWVersion& fw) {
@@ -191,7 +202,7 @@ void Engine::handle_ping_can(const uint8_t* data, size_t len) {
     }
 
     query_next_can_device();
-    notify_state_changed();
+    queue_notify();
 }
 
 void Engine::handle_custom_app_data(const uint8_t* data, size_t len) {
@@ -205,16 +216,16 @@ void Engine::handle_custom_app_data(const uint8_t* data, size_t len) {
         active_board_->refloat_version = info->version_string();
     }
 
-    notify_state_changed();
+    queue_notify();
 }
 
 void Engine::handle_write_new_app_data() {
     // Refloat install complete — re-query
     refloat_installing_ = false;
     refloat_installed_ = true;
-    send_payload(build_command(CommPacketID::FWVersion));
-    send_payload(build_refloat_info_request());
-    notify_state_changed();
+    queue_send(build_command(CommPacketID::FWVersion));
+    queue_send(build_refloat_info_request());
+    queue_notify();
 }
 
 void Engine::query_next_can_device() {
@@ -225,18 +236,19 @@ void Engine::query_next_can_device() {
     uint8_t next_id = pending_can_queries_.front();
     pending_can_queries_.erase(pending_can_queries_.begin());
     awaiting_fw_from_ = next_id;
-    send_payload(build_fw_version_request_can(next_id));
+    queue_send(build_fw_version_request_can(next_id));
 }
 
 // --- Refloat install ---
 
 void Engine::install_refloat() {
-    std::lock_guard lock(mu_);
+    std::unique_lock lock(mu_);
     refloat_installing_ = true;
     refloat_installed_ = false;
-    send_payload(build_command(CommPacketID::EraseNewApp));
-    send_payload(build_command(CommPacketID::WriteNewAppData));
-    notify_state_changed();
+    queue_send(build_command(CommPacketID::EraseNewApp));
+    queue_send(build_command(CommPacketID::WriteNewAppData));
+    queue_notify();
+    flush_pending(lock);
 }
 
 // --- Thread-safe getters ---
@@ -353,17 +365,39 @@ void Engine::set_active_profile_id(const std::string& id) {
     storage_.set_active_profile_id(id);
 }
 
-// --- Helpers ---
+// --- Deferred callback helpers ---
 
-void Engine::send_payload(const std::vector<uint8_t>& payload) {
-    if (send_cb_) {
-        send_cb_(payload.data(), payload.size());
-    }
+void Engine::queue_send(const std::vector<uint8_t>& payload) {
+    pending_sends_.push_back(payload);
 }
 
-void Engine::notify_state_changed() {
-    if (state_cb_) {
-        state_cb_();
+void Engine::queue_notify() {
+    pending_notify_ = true;
+}
+
+void Engine::flush_pending(std::unique_lock<std::mutex>& lock) {
+    // Move pending work out while still locked
+    auto sends = std::move(pending_sends_);
+    pending_sends_.clear();
+    auto errors = std::move(pending_errors_);
+    pending_errors_.clear();
+    bool notify = pending_notify_;
+    pending_notify_ = false;
+    auto send_cb = send_cb_;
+    auto state_cb = state_cb_;
+    auto error_cb = error_cb_;
+
+    // Release lock BEFORE firing callbacks — prevents deadlock on re-entry
+    lock.unlock();
+
+    for (auto& pkt : sends) {
+        if (send_cb) send_cb(pkt.data(), pkt.size());
+    }
+    if (notify && state_cb) {
+        state_cb();
+    }
+    for (auto& msg : errors) {
+        if (error_cb) error_cb(msg.c_str());
     }
 }
 

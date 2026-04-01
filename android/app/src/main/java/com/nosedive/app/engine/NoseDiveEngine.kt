@@ -1,6 +1,7 @@
 package com.nosedive.app.engine
 
 import android.content.Context
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -9,10 +10,14 @@ import java.io.File
 /**
  * Kotlin wrapper around the C++ NoseDive engine via JNI.
  * All business logic lives in C++. This is a thin bridge.
+ *
+ * The engine is app-scoped and lives for the process lifetime.
  */
 class NoseDiveEngine private constructor(context: Context) {
 
     companion object {
+        private const val TAG = "NoseDiveEngine"
+
         init {
             System.loadLibrary("nosedive_jni")
         }
@@ -37,6 +42,13 @@ class NoseDiveEngine private constructor(context: Context) {
     private val _showWizard = MutableStateFlow(false)
     val showWizard: StateFlow<Boolean> = _showWizard.asStateFlow()
 
+    // Pending send payload — BLE service reads this to transmit
+    private val _pendingSendPayload = MutableStateFlow<ByteArray?>(null)
+    val pendingSendPayload: StateFlow<ByteArray?> = _pendingSendPayload.asStateFlow()
+
+    // BLE service reference for sending data
+    var bleService: com.nosedive.app.ble.BLEService? = null
+
     init {
         val storagePath = File(context.filesDir, "nosedive_data.json").absolutePath
         nativeInit(storagePath)
@@ -44,17 +56,17 @@ class NoseDiveEngine private constructor(context: Context) {
 
     fun onConnected() {
         nativeOnConnected()
-        refreshState()
+        // State callback from C++ will trigger refreshState() automatically
     }
 
     fun onDisconnected() {
         nativeOnDisconnected()
-        refreshState()
+        // State callback from C++ will trigger refreshState() automatically
     }
 
     fun handlePayload(data: ByteArray) {
         nativeHandlePayload(data)
-        refreshState()
+        // State callback from C++ will trigger refreshState() automatically
     }
 
     fun installRefloat() = nativeInstallRefloat()
@@ -65,6 +77,24 @@ class NoseDiveEngine private constructor(context: Context) {
     val speedMph: Double get() = nativeSpeedMph()
     val boardCount: Int get() = nativeBoardCount()
     val profileCount: Int get() = nativeProfileCount()
+
+    /**
+     * Called from C++ via JNI when engine state changes.
+     * Refreshes all state flows so Compose UI recomposes.
+     */
+    fun onEngineStateChanged() {
+        refreshState()
+    }
+
+    /**
+     * Called from C++ via JNI when engine wants to send a VESC payload.
+     * Forwards to the BLE service for transmission.
+     */
+    fun onEngineSendPayload(data: ByteArray) {
+        Log.d(TAG, "Engine send payload: ${data.size} bytes")
+        _pendingSendPayload.value = data
+        bleService?.send(data)
+    }
 
     private fun refreshState() {
         _hasActiveBoard.value = nativeHasActiveBoard()
@@ -91,14 +121,8 @@ class NoseDiveEngine private constructor(context: Context) {
         }
     }
 
-    fun destroy() {
-        nativeDestroy()
-        instance = null
-    }
-
     // --- JNI native methods ---
     private external fun nativeInit(storagePath: String)
-    private external fun nativeDestroy()
     private external fun nativeOnConnected()
     private external fun nativeOnDisconnected()
     private external fun nativeHandlePayload(data: ByteArray)

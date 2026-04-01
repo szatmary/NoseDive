@@ -19,6 +19,9 @@ using SendCallback = std::function<void(const uint8_t* payload, size_t len)>;
 /// Callback when engine state changes and UI should refresh.
 using StateCallback = std::function<void()>;
 
+/// Callback for diagnostic messages (unknown commands, parse failures).
+using ErrorCallback = std::function<void(const char* message)>;
+
 /// CAN device info discovered during enumeration.
 struct CANDevice {
     uint8_t controller_id = 0;
@@ -34,6 +37,7 @@ public:
     // --- Transport callbacks ---
     void set_send_callback(SendCallback cb);
     void set_state_callback(StateCallback cb);
+    void set_error_callback(ErrorCallback cb);
 
     // --- Connection lifecycle ---
     void on_connected();
@@ -90,6 +94,7 @@ private:
     Storage storage_;
     SendCallback send_cb_;
     StateCallback state_cb_;
+    ErrorCallback error_cb_;
 
     // Live state
     Telemetry telemetry_;
@@ -113,6 +118,11 @@ private:
     // Board type guess result (cached)
     mutable std::string guessed_type_cache_;
 
+    // Deferred callback queues (populated under lock, flushed outside)
+    std::vector<std::vector<uint8_t>> pending_sends_;
+    std::vector<std::string> pending_errors_;
+    bool pending_notify_ = false;
+
     // --- Internal handlers (called with mu_ held) ---
     void handle_values(const uint8_t* data, size_t len);
     void handle_fw_version(const uint8_t* data, size_t len);
@@ -121,9 +131,12 @@ private:
     void handle_write_new_app_data();
     void handle_fw_info(const FWVersion& fw);
     void query_next_can_device();
-    void send_payload(const std::vector<uint8_t>& payload);
-    void notify_state_changed();
     bool is_known_board_locked() const; // mu_ already held
+
+    // Deferred callback helpers — queue work while locked, flush after unlock
+    void queue_send(const std::vector<uint8_t>& payload);
+    void queue_notify();
+    void flush_pending(std::unique_lock<std::mutex>& lock);
 };
 
 } // namespace nosedive

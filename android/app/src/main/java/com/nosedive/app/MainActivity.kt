@@ -4,27 +4,27 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.MaterialTheme
+import com.nosedive.app.ble.BLEService
 import com.nosedive.app.engine.NoseDiveEngine
 import com.nosedive.app.ui.MainScreen
 
 class MainActivity : ComponentActivity() {
 
-    private lateinit var engine: NoseDiveEngine
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        engine = NoseDiveEngine.getInstance(this)
+        val engine = NoseDiveEngine.getInstance(this)
+        val bleService = BLEService(applicationContext)
+
+        // Wire BLE callbacks into the engine
+        engine.bleService = bleService
+        bleService.onPayloadReceived = { data -> engine.handlePayload(data) }
+        bleService.onConnected = { engine.onConnected() }
+        bleService.onDisconnected = { engine.onDisconnected() }
 
         setContent {
             MaterialTheme {
-                MainScreen(engine)
+                MainScreen(engine, bleService)
             }
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        // Engine is application-scoped — let process death handle cleanup.
-        // Calling engine.destroy() here breaks re-creation after config changes.
     }
 }

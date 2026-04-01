@@ -1,32 +1,97 @@
 #include <jni.h>
 #include "nosedive/ffi.h"
 #include <string>
+#include <android/log.h>
+
+#define LOG_TAG "NoseDiveJNI"
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
 // JNI bridge for the NoseDive C++ engine.
 // Maps 1:1 to the C FFI — Kotlin calls these via NoseDiveEngine.kt.
 
 static nd_engine_t* g_engine = nullptr;
 
-// Callback pointers for JNI → Kotlin upcalls
+// Callback pointers for JNI -> Kotlin upcalls
 static JavaVM* g_jvm = nullptr;
 static jobject g_callback_obj = nullptr;
+
+// Helper: call a void no-arg Kotlin method on g_callback_obj from any thread.
+static void call_kotlin_void(const char* method_name) {
+    if (!g_jvm || !g_callback_obj) return;
+    JNIEnv* env;
+    bool attached = false;
+    if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+        g_jvm->AttachCurrentThread(&env, nullptr);
+        attached = true;
+    }
+    jclass cls = env->GetObjectClass(g_callback_obj);
+    jmethodID mid = env->GetMethodID(cls, method_name, "()V");
+    if (mid) env->CallVoidMethod(g_callback_obj, mid);
+    env->DeleteLocalRef(cls);
+    if (attached) g_jvm->DetachCurrentThread();
+}
+
+// Helper: call a Kotlin method that takes a byte[] on g_callback_obj from any thread.
+static void call_kotlin_bytes(const char* method_name, const uint8_t* data, size_t len) {
+    if (!g_jvm || !g_callback_obj) return;
+    JNIEnv* env;
+    bool attached = false;
+    if (g_jvm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
+        g_jvm->AttachCurrentThread(&env, nullptr);
+        attached = true;
+    }
+    jclass cls = env->GetObjectClass(g_callback_obj);
+    jmethodID mid = env->GetMethodID(cls, method_name, "([B)V");
+    if (mid) {
+        jbyteArray arr = env->NewByteArray(static_cast<jsize>(len));
+        if (arr) {
+            env->SetByteArrayRegion(arr, 0, static_cast<jsize>(len),
+                                    reinterpret_cast<const jbyte*>(data));
+            env->CallVoidMethod(g_callback_obj, mid, arr);
+            env->DeleteLocalRef(arr);
+        }
+    }
+    env->DeleteLocalRef(cls);
+    if (attached) g_jvm->DetachCurrentThread();
+}
+
+// C callback: engine wants to send a VESC payload
+static void engine_send_cb(const uint8_t* payload, size_t len, void* /*ctx*/) {
+    call_kotlin_bytes("onEngineSendPayload", payload, len);
+}
+
+// C callback: engine state changed
+static void engine_state_cb(void* /*ctx*/) {
+    call_kotlin_void("onEngineStateChanged");
+}
+
+// C callback: engine diagnostic/error message
+static void engine_error_cb(const char* message, void* /*ctx*/) {
+    LOGI("Engine error: %s", message);
+}
 
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_com_nosedive_app_engine_NoseDiveEngine_nativeInit(JNIEnv* env, jobject, jstring storagePath) {
+Java_com_nosedive_app_engine_NoseDiveEngine_nativeInit(JNIEnv* env, jobject thiz, jstring storagePath) {
     const char* path = env->GetStringUTFChars(storagePath, nullptr);
     if (!path) return; // OOM
     g_engine = nd_engine_create(path);
     env->ReleaseStringUTFChars(storagePath, path);
     env->GetJavaVM(&g_jvm);
-}
 
-JNIEXPORT void JNICALL
-Java_com_nosedive_app_engine_NoseDiveEngine_nativeDestroy(JNIEnv*, jobject) {
+    // Store a global ref to the engine object for upcalls from C++ callbacks
+    if (g_callback_obj) {
+        env->DeleteGlobalRef(g_callback_obj);
+    }
+    g_callback_obj = env->NewGlobalRef(thiz);
+
+    // Set engine callbacks so on_connected() discovery commands actually go somewhere
     if (g_engine) {
-        nd_engine_destroy(g_engine);
-        g_engine = nullptr;
+        nd_engine_set_send_callback(g_engine, engine_send_cb, nullptr);
+        nd_engine_set_state_callback(g_engine, engine_state_cb, nullptr);
+        nd_engine_set_error_callback(g_engine, engine_error_cb, nullptr);
     }
 }
 

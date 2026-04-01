@@ -13,8 +13,7 @@ class BLEService: NSObject {
         case discovered(DiscoveredDevice)
         case connected
         case disconnected
-        case telemetry(BoardTelemetry)
-        case refloat(RefloatState)
+        case data(Data) // raw BLE notification bytes (not yet decoded)
     }
 
     // VESC BLE UUIDs
@@ -28,7 +27,6 @@ class BLEService: NSObject {
     private var rxCharacteristic: CBCharacteristic?
 
     private let eventHandler: (Event) -> Void
-    private var packetBuffer = Data()
     private let bleQueue = DispatchQueue(label: "com.nosedive.ble", qos: .userInitiated)
 
     init(eventHandler: @escaping (Event) -> Void) {
@@ -146,41 +144,7 @@ extension BLEService: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == Self.vescRxCharUUID,
               let data = characteristic.value else { return }
-        // Accumulate and parse VESC packets
-        packetBuffer.append(data)
-        processPacketBuffer()
-    }
-
-    private func processPacketBuffer() {
-        // Simple VESC packet extraction
-        while let startIdx = packetBuffer.firstIndex(of: 0x02) ?? packetBuffer.firstIndex(of: 0x03) {
-            // Remove garbage before start byte
-            if startIdx > packetBuffer.startIndex {
-                packetBuffer.removeSubrange(packetBuffer.startIndex..<startIdx)
-            }
-            guard packetBuffer.count >= 3 else { return }
-
-            let isShort = packetBuffer[packetBuffer.startIndex] == 0x02
-            let headerLen = isShort ? 2 : 3
-            let payloadLen: Int
-            if isShort {
-                payloadLen = Int(packetBuffer[packetBuffer.startIndex + 1])
-            } else {
-                payloadLen = Int(packetBuffer[packetBuffer.startIndex + 1]) << 8 | Int(packetBuffer[packetBuffer.startIndex + 2])
-            }
-
-            let totalLen = headerLen + payloadLen + 3 // header + payload + crc(2) + end(1)
-            guard packetBuffer.count >= totalLen else { return }
-
-            // Extract and remove the packet
-            let packetData = packetBuffer.prefix(totalLen)
-            packetBuffer.removeSubrange(packetBuffer.startIndex..<packetBuffer.startIndex + totalLen)
-
-            // Verify end byte
-            guard packetData.last == 0x03 else { continue }
-
-            // TODO: CRC check + dispatch payload to command parser
-            // For now this is a skeleton — will integrate with C++ lib
-        }
+        // Forward raw BLE bytes — packet reassembly handled by C++ nd_transport_t
+        eventHandler(.data(data))
     }
 }

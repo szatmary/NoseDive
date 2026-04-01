@@ -107,6 +107,8 @@ struct nd_engine {
     void* send_ctx = nullptr;
     nd_engine_state_cb state_cb = nullptr;
     void* state_ctx = nullptr;
+    nd_engine_error_cb error_cb = nullptr;
+    void* error_ctx = nullptr;
 
     explicit nd_engine(const char* path) : engine(path) {}
 };
@@ -137,6 +139,14 @@ void nd_engine_set_state_callback(nd_engine_t* e, nd_engine_state_cb cb, void* c
     e->state_ctx = ctx;
     e->engine.set_state_callback([e]() {
         if (e->state_cb) e->state_cb(e->state_ctx);
+    });
+}
+
+void nd_engine_set_error_callback(nd_engine_t* e, nd_engine_error_cb cb, void* ctx) {
+    e->error_cb = cb;
+    e->error_ctx = ctx;
+    e->engine.set_error_callback([e](const char* msg) {
+        if (e->error_cb) e->error_cb(msg, e->error_ctx);
     });
 }
 
