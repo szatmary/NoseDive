@@ -254,10 +254,10 @@ class BoardManager: ObservableObject {
 
         case VESCPacket.CommPacketID.pingCAN.rawValue:
             canDevices = VESCPacket.parsePingCAN(payload)
-            // Query FW version for each CAN device
-            for id in canDevices where id != 0 {
-                tcpTransport?.requestFWVersionForCAN(targetID: id)
-            }
+            // Queue CAN device IDs for sequential FW queries
+            pendingCANQueries = canDevices.filter { $0 != 0 }
+            // Start querying the first one
+            queryNextCANDevice()
 
         case VESCPacket.CommPacketID.customAppData.rawValue:
             if let info = VESCPacket.parseRefloatInfo(payload) {
@@ -278,23 +278,30 @@ class BoardManager: ObservableObject {
         }
     }
 
+    /// The ID we're currently expecting a FW response from.
+    /// nil means the next FW response is for the main VESC (direct query).
+    private var awaitingFWResponseFrom: UInt8?
+
+    private func queryNextCANDevice() {
+        guard !pendingCANQueries.isEmpty else {
+            awaitingFWResponseFrom = nil
+            return
+        }
+        let nextID = pendingCANQueries.removeFirst()
+        awaitingFWResponseFrom = nextID
+        tcpTransport?.requestFWVersionForCAN(targetID: nextID)
+    }
+
     private func handleFWVersion(_ info: VESCPacket.FWVersionInfo) {
-        // Determine which device this came from based on HW type and existing knowledge
-        // The main VESC responds directly; CAN devices respond via forward
+        // Use the pending query tracker to determine which device this response belongs to.
         let controllerID: UInt8
-        if info.hwType == .vescExpress {
-            controllerID = 253
-        } else if deviceFWInfo[0] == nil || deviceFWInfo[0]?.fwInfo == nil {
-            // First FW version response is the main VESC
-            controllerID = 0
-        } else if info.uuid != deviceFWInfo[0]?.fwInfo?.uuid {
-            // Different UUID = different device. Check CAN IDs.
-            if let bmsID = canDevices.first(where: { $0 == 10 }), deviceFWInfo[10] == nil {
-                controllerID = bmsID
-            } else {
-                controllerID = 0
-            }
+        if let pending = awaitingFWResponseFrom {
+            controllerID = pending
+            awaitingFWResponseFrom = nil
+            // Query the next CAN device in the queue
+            queryNextCANDevice()
         } else {
+            // No pending CAN query — this is the main VESC's direct response
             controllerID = 0
         }
 
