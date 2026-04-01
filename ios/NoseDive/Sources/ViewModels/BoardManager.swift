@@ -31,7 +31,7 @@ class BoardManager: ObservableObject {
     // Transport
     private var bleService: BLEService?
     private var tcpTransport: TCPTransport?
-    private var bleTransport: OpaquePointer? // nd_transport_t* for BLE packet framing
+    private var vescTransport: OpaquePointer? // nd_transport_t* for VESC packet framing (BLE and TCP)
     private var activeTransport: TransportKind = .none
 
     enum TransportKind {
@@ -69,6 +69,11 @@ class BoardManager: ObservableObject {
             Task { @MainActor in
                 mgr.refreshFromEngine()
             }
+        }, selfPtr)
+
+        nd_engine_set_error_callback(engine, { message, ctx in
+            guard let message else { return }
+            print("NoseDive engine: \(String(cString: message))")
         }, selfPtr)
 
         bleService = BLEService { [weak self] event in
@@ -136,18 +141,10 @@ class BoardManager: ObservableObject {
     // MARK: - Transport send
 
     private func sendToTransport(_ data: Data) {
-        switch activeTransport {
-        case .ble:
-            // Route through C++ transport — handles framing + MTU chunking
-            guard let transport = bleTransport else { return }
-            data.withUnsafeBytes { buf in
-                guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-                nd_transport_send_payload(transport, ptr, buf.count)
-            }
-        case .tcp:
-            tcpTransport?.send(data)
-        case .none:
-            break
+        guard let transport = vescTransport else { return }
+        data.withUnsafeBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            nd_transport_send_payload(transport, ptr, buf.count)
         }
     }
 
@@ -175,24 +172,48 @@ class BoardManager: ObservableObject {
         stopScan()
         connectionState = .connecting(device.name)
         activeTransport = .ble
-        setupBLETransport()
+        setupVESCTransport(mtu: 20)
         bleService?.connect(to: device.identifier)
     }
 
-    private func setupBLETransport() {
-        teardownBLETransport()
-        let transport = nd_transport_create(20) // default MTU
-        bleTransport = transport
+    // MARK: - TCP Connection
+
+    func connectTCP(host: String, port: UInt16) {
+        disconnect()
+        connectionState = .connecting("\(host):\(port)")
+        activeTransport = .tcp
+        // TCP has no MTU limit — use large value so framing sends whole packets
+        setupVESCTransport(mtu: 4096)
+
+        let transport = TCPTransport { [weak self] event in
+            Task { @MainActor in
+                self?.handleTCPEvent(event)
+            }
+        }
+        tcpTransport = transport
+        transport.connect(host: host, port: port)
+    }
+
+    // MARK: - VESC Transport (shared by BLE and TCP)
+
+    private func setupVESCTransport(mtu: Int) {
+        teardownVESCTransport()
+        let transport = nd_transport_create(mtu)
+        vescTransport = transport
 
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
-        // Transport send callback → write raw BLE chunks
+        // Transport send callback → write framed chunks to the active link
         nd_transport_set_send_callback(transport, { data, len, ctx in
             guard let ctx, let data else { return }
             let chunk = Data(bytes: data, count: len)
             let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
             Task { @MainActor in
-                mgr.bleService?.send(chunk)
+                switch mgr.activeTransport {
+                case .ble:  mgr.bleService?.send(chunk)
+                case .tcp:  mgr.tcpTransport?.send(chunk)
+                case .none: break
+                }
             }
         }, selfPtr)
 
@@ -206,38 +227,21 @@ class BoardManager: ObservableObject {
         }, selfPtr)
     }
 
-    private func teardownBLETransport() {
-        if let transport = bleTransport {
+    private func teardownVESCTransport() {
+        if let transport = vescTransport {
             nd_transport_destroy(transport)
-            bleTransport = nil
+            vescTransport = nil
         }
-    }
-
-    // MARK: - TCP Connection
-
-    func connectTCP(host: String, port: UInt16) {
-        disconnect()
-        connectionState = .connecting("\(host):\(port)")
-        activeTransport = .tcp
-
-        let transport = TCPTransport { [weak self] event in
-            Task { @MainActor in
-                self?.handleTCPEvent(event)
-            }
-        }
-        tcpTransport = transport
-        transport.connect(host: host, port: port)
     }
 
     // MARK: - Disconnect
 
     func disconnect() {
+        teardownVESCTransport()
         switch activeTransport {
         case .ble:
-            teardownBLETransport()
             bleService?.disconnect()
         case .tcp:
-            tcpTransport?.stopPolling()
             tcpTransport?.disconnect()
             tcpTransport = nil
         case .none:
@@ -332,18 +336,13 @@ class BoardManager: ObservableObject {
             connectionState = .connected
             nd_engine_on_connected(engine)
         case .disconnected:
-            teardownBLETransport()
+            teardownVESCTransport()
             connectionState = .disconnected
             activeTransport = .none
             nd_engine_on_disconnected(engine)
             refreshFromEngine()
         case .data(let rawData):
-            // Feed raw BLE bytes to C++ transport for packet reassembly
-            guard let transport = bleTransport else { return }
-            rawData.withUnsafeBytes { buf in
-                guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-                nd_transport_receive(transport, ptr, buf.count)
-            }
+            feedTransport(rawData)
         }
     }
 
@@ -354,21 +353,27 @@ class BoardManager: ObservableObject {
         case .connected:
             connectionState = .connected
             nd_engine_on_connected(engine)
-            tcpTransport?.startPolling(interval: 0.1)
 
         case .disconnected:
+            teardownVESCTransport()
             connectionState = .disconnected
             activeTransport = .none
             tcpTransport = nil
             nd_engine_on_disconnected(engine)
             refreshFromEngine()
 
-        case .packet(let payload):
-            // Feed raw payload to C++ engine
-            payload.withUnsafeBytes { buf in
-                guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-                nd_engine_handle_payload(engine, ptr, buf.count)
-            }
+        case .data(let rawData):
+            feedTransport(rawData)
+        }
+    }
+
+    // MARK: - Transport data feed (shared by BLE and TCP)
+
+    private func feedTransport(_ rawData: Data) {
+        guard let transport = vescTransport else { return }
+        rawData.withUnsafeBytes { buf in
+            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
+            nd_transport_receive(transport, ptr, buf.count)
         }
     }
 }
