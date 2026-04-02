@@ -366,7 +366,18 @@ void SetupBoard::advance() {
         if (send_cb_) send_cb_({static_cast<uint8_t>(vesc::CommPacketID::GetMCConf)});
         break;
     case SetupStep::ConfigurePower:
-        if (send_cb_) send_cb_(vesc::GetValues::Request{}.encode());
+        if (send_cb_) {
+            // If BMS is on CAN, query it for cell-level data
+            if (auto bms_id = find_can_id(UpdateTarget::BMS)) {
+                send_cb_(vesc::ForwardCAN::Request{
+                    .target_id = *bms_id,
+                    .inner_payload = vesc::BMSGetValues::Request{}.encode()
+                }.encode());
+            } else {
+                // No BMS — just read pack voltage from VESC
+                send_cb_(vesc::GetValues::Request{}.encode());
+            }
+        }
         break;
     default:
         break;
@@ -467,7 +478,16 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         break;
 
     case SetupStep::ConfigurePower:
-        if (cmd == vesc::CommPacketID::GetValues) {
+        if (cmd == vesc::CommPacketID::BMSGetValues) {
+            auto bms = vesc::BMSGetValues::Response::decode(data, len);
+            if (!bms) { set_error("Could not read BMS data"); break; }
+            char buf[256];
+            std::snprintf(buf, sizeof(buf),
+                "BMS: %.1fV, %dS, SoC %.0f%%",
+                bms->voltage, bms->cell_count, bms->soc * 100.0);
+            set_state(SetupStep::ConfigurePower, StepPhase::Working, buf);
+            advance();
+        } else if (cmd == vesc::CommPacketID::GetValues) {
             auto v = vesc::GetValues::Response::decode(data, len);
             if (!v) { set_error("Could not read battery voltage"); break; }
             char buf[128];

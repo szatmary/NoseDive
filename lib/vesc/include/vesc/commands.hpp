@@ -292,6 +292,29 @@ struct GetBatteryCut {
     };
 };
 
+// --- COMM_BMS_GET_VALUES (0x60) ---
+struct BMSGetValues {
+    static constexpr CommPacketID id = CommPacketID::BMSGetValues;
+
+    struct Request {
+        std::vector<uint8_t> encode() const;
+    };
+
+    struct Response {
+        double voltage = 0;             // Total pack voltage
+        double current = 0;             // Pack current (A)
+        double soc = 0;                 // State of charge (0-1)
+        uint8_t cell_count = 0;
+        std::vector<double> cell_voltages;
+        uint64_t balancing = 0;         // Cell balancing bitmap
+        uint8_t temp_count = 0;
+        std::vector<double> temperatures;
+        double humidity = 0;
+
+        static std::optional<Response> decode(const uint8_t* data, size_t len);
+    };
+};
+
 // --- COMM_DETECT_APPLY_ALL_FOC (0x3A) ---
 struct DetectApplyAllFOC {
     static constexpr CommPacketID id = CommPacketID::DetectApplyAllFOC;

@@ -263,6 +263,50 @@ std::optional<GetBatteryCut::Response> GetBatteryCut::Response::decode(const uin
     return r;
 }
 
+std::vector<uint8_t> BMSGetValues::Request::encode() const {
+    return {static_cast<uint8_t>(CommPacketID::BMSGetValues)};
+}
+
+std::optional<BMSGetValues::Response> BMSGetValues::Response::decode(const uint8_t* data, size_t len) {
+    // Minimum: cmd(1) + voltage(4) + current(4) + soc(4) + cell_count(1) = 14
+    if (len < 14) return std::nullopt;
+    Buffer buf(std::vector<uint8_t>(data + 1, data + len));
+    Response r;
+    r.voltage = buf.read_float32(1e6);
+    r.current = buf.read_float32(1e6);
+    r.soc     = buf.read_float32(1e6);
+
+    r.cell_count = buf.read_uint8();
+    r.cell_voltages.resize(r.cell_count);
+    if (buf.remaining() < r.cell_count * 2u) return std::nullopt;
+    for (uint8_t i = 0; i < r.cell_count; i++) {
+        r.cell_voltages[i] = buf.read_float16(1000);
+    }
+
+    // Cell balancing bitmap (8 bytes)
+    if (buf.remaining() < 8) return std::nullopt;
+    r.balancing = 0;
+    for (int i = 0; i < 8; i++) {
+        r.balancing = (r.balancing << 8) | buf.read_uint8();
+    }
+
+    // Temperature sensors
+    if (buf.remaining() < 1) return std::nullopt;
+    r.temp_count = buf.read_uint8();
+    r.temperatures.resize(r.temp_count);
+    if (buf.remaining() < r.temp_count * 2u) return std::nullopt;
+    for (uint8_t i = 0; i < r.temp_count; i++) {
+        r.temperatures[i] = buf.read_float16(100);
+    }
+
+    // Humidity
+    if (buf.remaining() >= 2) {
+        r.humidity = buf.read_float16(100);
+    }
+
+    return r;
+}
+
 std::optional<DetectApplyAllFOC::Response> DetectApplyAllFOC::Response::decode(const uint8_t* data, size_t len) {
     if (len < 3) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));

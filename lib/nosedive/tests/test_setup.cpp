@@ -1041,6 +1041,150 @@ static void test_factory_reset() {
     ASSERT(saw_complete, "factory_reset: saw completion message");
 }
 
+// Helper: build a fake BMS response
+static std::vector<uint8_t> build_bms_response(uint8_t cell_count, double voltage,
+                                                 double current, double soc) {
+    vesc::Buffer buf;
+    buf.append_uint8(static_cast<uint8_t>(vesc::CommPacketID::BMSGetValues));
+    buf.append_float32(voltage, 1e6);  // total voltage
+    buf.append_float32(current, 1e6);  // current
+    buf.append_float32(soc, 1e6);      // SoC (0-1)
+    buf.append_uint8(cell_count);
+    double cell_v = voltage / cell_count;
+    for (uint8_t i = 0; i < cell_count; i++) {
+        buf.append_float16(cell_v, 1000);
+    }
+    // Balancing bitmap (8 bytes)
+    for (int i = 0; i < 8; i++) buf.append_uint8(0);
+    // Temp sensors
+    buf.append_uint8(2);
+    buf.append_float16(28.0, 100);
+    buf.append_float16(29.5, 100);
+    // Humidity
+    buf.append_float16(35.0, 100);
+    return buf.take();
+}
+
+// --- ConfigurePower queries BMS when present ---
+static void test_configure_power_with_bms() {
+    nosedive::SetupBoard setup;
+
+    std::vector<std::vector<uint8_t>> sent;
+    setup.set_state_callback([&](const nosedive::SetupState&) {});
+    setup.set_send_callback([&](const std::vector<uint8_t>& p) {
+        sent.push_back(p);
+    });
+
+    vesc::FWVersion::Response fw;
+    fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+    setup.can_device_ids = {10}; // BMS on CAN 10
+    setup.main_fw = fw;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
+
+    setup.start();
+    // Skip through to ConfigurePower: FactoryReset→InstallRefloat→...
+    // FWExpress skipped (no Express), FWBMS check starts
+    // Feed BMS FW response (up to date)
+    auto bms_fw = build_fw_response(6, 6, "VESC BMS", 0xB0);
+    setup.handle_response(bms_fw.data(), bms_fw.size());
+    // Auto-advances past FWBMS → FWVESC (FW pre-populated, up to date) → FactoryReset
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "power_bms: at FactoryReset");
+    setup.skip(); // Skip FactoryReset
+    setup.skip(); // Skip InstallRefloat (up to date)
+
+    // At DetectFootpads — skip through remaining detection steps
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
+              "power_bms: at DetectFootpads");
+    setup.skip(); // DetectFootpads
+    setup.skip(); // CalibrateIMU
+    setup.skip(); // DetectMotor
+    setup.skip(); // ConfigureWheel
+
+    // Now at ConfigurePower
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
+              "power_bms: at ConfigurePower");
+
+    // Should have sent ForwardCAN + BMSGetValues (not plain GetValues)
+    ASSERT(!sent.empty(), "power_bms: sent command");
+    auto& last = sent.back();
+    ASSERT_EQ(last[0], static_cast<uint8_t>(vesc::CommPacketID::ForwardCAN),
+              "power_bms: sent ForwardCAN");
+    ASSERT_EQ(last[1], 10, "power_bms: target CAN ID 10");
+    ASSERT_EQ(last[2], static_cast<uint8_t>(vesc::CommPacketID::BMSGetValues),
+              "power_bms: inner payload is BMSGetValues");
+
+    // Feed BMS response (20S battery, 75.6V, 0A, 85% SoC)
+    auto bms_resp = build_bms_response(20, 75.6, 0.0, 0.85);
+    setup.handle_response(bms_resp.data(), bms_resp.size());
+
+    // Should show BMS info and advance to Done
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::Done),
+              "power_bms: at Done after BMS response");
+}
+
+// --- ConfigurePower falls back to GetValues without BMS ---
+static void test_configure_power_no_bms() {
+    nosedive::SetupBoard setup;
+
+    std::vector<std::vector<uint8_t>> sent;
+    setup.set_state_callback([&](const nosedive::SetupState&) {});
+    setup.set_send_callback([&](const std::vector<uint8_t>& p) {
+        sent.push_back(p);
+    });
+
+    vesc::FWVersion::Response fw;
+    fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+    setup.can_device_ids = {}; // No BMS
+    setup.main_fw = fw;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
+
+    setup.start();
+    setup.skip(); // FactoryReset
+    setup.skip(); // InstallRefloat
+    setup.skip(); // DetectFootpads
+    setup.skip(); // CalibrateIMU
+    setup.skip(); // DetectMotor
+    setup.skip(); // ConfigureWheel
+
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
+              "power_no_bms: at ConfigurePower");
+
+    // Should have sent plain GetValues (no BMS on CAN)
+    ASSERT(!sent.empty(), "power_no_bms: sent command");
+    ASSERT_EQ(sent.back()[0], static_cast<uint8_t>(vesc::CommPacketID::GetValues),
+              "power_no_bms: sent GetValues (no BMS)");
+}
+
+// --- BMSGetValues decode ---
+static void test_bms_get_values_decode() {
+    auto bms_resp = build_bms_response(20, 75.6, -2.5, 0.85);
+    auto parsed = vesc::BMSGetValues::Response::decode(bms_resp.data(), bms_resp.size());
+    ASSERT(parsed.has_value(), "bms_decode: parsed OK");
+    ASSERT_EQ(parsed->cell_count, 20, "bms_decode: 20 cells");
+    ASSERT(parsed->voltage > 75.0 && parsed->voltage < 76.0,
+           "bms_decode: voltage ~75.6V");
+    ASSERT(parsed->current < -2.0 && parsed->current > -3.0,
+           "bms_decode: current ~-2.5A");
+    ASSERT(parsed->soc > 0.84 && parsed->soc < 0.86,
+           "bms_decode: SoC ~0.85");
+    ASSERT_EQ(parsed->cell_voltages.size(), 20u,
+              "bms_decode: 20 cell voltages");
+    ASSERT_EQ(parsed->temp_count, 2, "bms_decode: 2 temp sensors");
+    ASSERT(parsed->temperatures[0] > 27.0 && parsed->temperatures[0] < 29.0,
+           "bms_decode: temp0 ~28°C");
+
+    // Too short → nullopt
+    uint8_t too_short[] = {static_cast<uint8_t>(vesc::CommPacketID::BMSGetValues), 0, 0};
+    ASSERT(!vesc::BMSGetValues::Response::decode(too_short, 3).has_value(),
+           "bms_decode: rejects too-short payload");
+}
+
 int main() {
     test_setup_wizard();
     test_setup_wizard_with_can();
@@ -1056,6 +1200,9 @@ int main() {
     test_refloat_version_check();
     test_refloat_version_comparison();
     test_factory_reset();
+    test_configure_power_with_bms();
+    test_configure_power_no_bms();
+    test_bms_get_values_decode();
 
     std::printf("\n%d/%d setup tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
