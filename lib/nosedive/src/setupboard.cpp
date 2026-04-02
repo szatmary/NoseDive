@@ -237,28 +237,30 @@ void SetupBoard::advance() {
         advance_to_next_fw_check();
         return;
 
-    case SetupStep::CheckFWVESC:
+    case SetupStep::CheckFWVESC: {
+        char buf[256];
         if (refloat_info) {
             bool outdated = LatestRefloat::is_outdated(
                 refloat_info->major, refloat_info->minor, refloat_info->patch);
-            char buf[256];
             if (outdated) {
                 std::snprintf(buf, sizeof(buf),
                     "Refloat %d.%d.%d — update available (%d.%d.%d)",
                     refloat_info->major, refloat_info->minor, refloat_info->patch,
                     LatestRefloat::major, LatestRefloat::minor, LatestRefloat::patch);
-                set_step(SetupStep::InstallRefloat, buf);
-                // Pause — user must update() or skip()
-                return;
+            } else {
+                std::snprintf(buf, sizeof(buf), "Refloat %d.%d.%d — up to date",
+                    refloat_info->major, refloat_info->minor, refloat_info->patch);
             }
-            std::snprintf(buf, sizeof(buf), "Refloat %d.%d.%d — up to date",
-                refloat_info->major, refloat_info->minor, refloat_info->patch);
-            set_step(SetupStep::InstallRefloat, buf);
-            advance();
-            return;
+        } else {
+            std::snprintf(buf, sizeof(buf),
+                "Refloat not installed — install %d.%d.%d?",
+                LatestRefloat::major, LatestRefloat::minor, LatestRefloat::patch);
         }
-        set_step(SetupStep::InstallRefloat, "Installing Refloat package...");
-        break;
+        set_step(SetupStep::InstallRefloat, buf);
+        // Always pause — user must update() to install/update, skip() to continue
+        // (skip blocked when not installed)
+        return;
+    }
 
     case SetupStep::UpdateFW:
         set_step(SetupStep::WaitReconnect, "Board is rebooting, waiting for reconnect...");

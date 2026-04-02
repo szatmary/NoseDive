@@ -81,7 +81,17 @@ static void test_setup_wizard() {
     // Skip the firmware update to continue the wizard
     setup.skip();
 
-    // Should be at DetectBattery now (Refloat already installed, skip that too)
+    // Should pause at InstallRefloat (up to date, awaiting confirmation)
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "wizard: at InstallRefloat after FW skip");
+    ASSERT(setup.state().detail.find("up to date") != std::string::npos,
+           "wizard: Refloat is up to date");
+
+    // Skip past Refloat (already installed)
+    setup.skip();
+
+    // Should be at DetectBattery now
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
               "wizard: at DetectBattery after skip");
@@ -327,6 +337,11 @@ static void test_setup_wizard_error() {
               static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
               "wizard_err: paused at CheckFWVESC (outdated)");
     setup.skip();
+    // Paused at InstallRefloat (up to date) — skip to continue
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "wizard_err: paused at InstallRefloat");
+    setup.skip();
     // Now at DetectBattery
 
     // Feed garbage — should not advance
@@ -420,10 +435,10 @@ static void test_fw_check_uptodate_advances() {
     auto fw_resp = build_fw_response(6, 6, "60_MK6", 0xA0); // UP TO DATE
     setup.handle_response(fw_resp.data(), fw_resp.size());
 
-    // Should auto-advance past CheckFWVESC (Refloat installed, so skips that too)
-    ASSERT(static_cast<uint8_t>(setup.state().step) >
-           static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
-           "uptodate: auto-advances past CheckFWVESC");
+    // Should advance past CheckFWVESC and pause at InstallRefloat for confirmation
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "uptodate: advances to InstallRefloat");
 }
 
 // --- Firmware update flow: update → WaitReconnect → verify ---
@@ -451,10 +466,10 @@ static void test_fw_update_flow() {
                     nosedive::SetupStep::CheckFWVESC,
                     6, 6, "60_MK6", 0xA0);
 
-    // Should have advanced to DetectBattery (Refloat already installed)
+    // Should pause at InstallRefloat (up to date, awaiting confirmation)
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
-              "update_flow: at DetectBattery after VESC update");
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "update_flow: at InstallRefloat after VESC update");
 }
 
 // --- Pre-populated outdated FW should also pause ---
@@ -545,23 +560,28 @@ static void test_refloat_install() {
 
     setup.start();
 
-    // Should be at InstallRefloat (FW is up-to-date, auto-advances)
+    // Should pause at InstallRefloat with "not installed" prompt
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
               "refloat_install: at InstallRefloat");
+    ASSERT(setup.state().detail.find("not installed") != std::string::npos,
+           "refloat_install: detail says not installed");
+
+    // Skip should be blocked (not installed)
+    auto step_before = setup.state().step;
+    setup.skip();
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(step_before),
+              "refloat_install: skip is blocked when not installed");
+
+    // User confirms install
+    setup.update();
 
     // Should have sent LispEraseCode
     ASSERT(!sent.empty(), "refloat_install: sent erase command");
     ASSERT_EQ(sent.back()[0],
               static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode),
               "refloat_install: first command is LispEraseCode");
-
-    // Skip should be blocked
-    auto step_before = setup.state().step;
-    setup.skip();
-    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(step_before),
-              "refloat_install: skip is blocked during install");
 
     // Drive the full install
     sent.clear();
@@ -655,6 +675,9 @@ static void test_refloat_install_chunked() {
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
               "chunked: at InstallRefloat");
 
+    // User confirms install
+    setup.update();
+
     // LispEraseCode ack
     uint8_t erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode), 1};
     setup.handle_response(erase_ack, sizeof(erase_ack));
@@ -709,7 +732,7 @@ static void test_refloat_install_chunked() {
 
 // --- Refloat version check: outdated pauses, up-to-date advances ---
 static void test_refloat_version_check() {
-    // Test 1: Up-to-date Refloat auto-advances
+    // Test 1: Up-to-date Refloat pauses for confirmation, skip() continues
     {
         nosedive::SetupBoard setup;
         setup.set_state_callback([&](const nosedive::SetupState&) {});
@@ -723,10 +746,18 @@ static void test_refloat_version_check() {
 
         setup.start();
 
-        // Should auto-advance past InstallRefloat to DetectBattery
+        // Should pause at InstallRefloat
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+                  "refloat_ver: up-to-date pauses at InstallRefloat");
+        ASSERT(setup.state().detail.find("up to date") != std::string::npos,
+               "refloat_ver: detail says up to date");
+
+        // skip() continues
+        setup.skip();
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
-                  "refloat_ver: up-to-date auto-advances");
+                  "refloat_ver: skip advances to DetectBattery");
     }
 
     // Test 2: Outdated Refloat pauses
