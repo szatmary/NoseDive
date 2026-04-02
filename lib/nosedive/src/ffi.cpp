@@ -288,6 +288,10 @@ void nd_engine_setup_skip(nd_engine_t* e)   { e->engine.setup_skip(); }
 void nd_engine_setup_update(nd_engine_t* e) { e->engine.setup_update(); }
 void nd_engine_setup_abort(nd_engine_t* e)  { e->engine.setup_abort(); }
 
+bool nd_engine_load_refloat_package(nd_engine_t* e, const uint8_t* data, size_t len) {
+    return e->engine.load_refloat_package(data, len);
+}
+
 // --- Board fleet ---
 
 size_t nd_engine_board_count(const nd_engine_t* e) {

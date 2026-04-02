@@ -19,6 +19,7 @@
 // step transition so the UI can update.
 
 #include <vesc/commands.hpp>
+#include <vesc/vescpkg.hpp>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -78,6 +79,16 @@ using SetupCallback = std::function<void(const SetupState&)>;
 /// Callback: wizard wants to send a VESC payload.
 using SetupSendCallback = std::function<void(const std::vector<uint8_t>& payload)>;
 
+// Refloat install sub-phases (within InstallRefloat step)
+enum class InstallPhase : uint8_t {
+    LispErase,
+    LispWrite,
+    QmlErase,
+    QmlWrite,
+    SetRunning,
+    Done,
+};
+
 /// Board setup wizard. Created by the engine when a new board is detected.
 class SetupBoard {
 public:
@@ -125,6 +136,12 @@ public:
     /// Whether Refloat is already installed.
     bool has_refloat = false;
 
+    /// Refloat package data (set by engine before start).
+    const vesc::VescPackage* refloat_package = nullptr;
+
+    /// Chunk size for uploading Lisp/QML data.
+    static constexpr size_t kUploadChunkSize = 400;
+
 private:
     SetupState state_;
     SetupCallback state_cb_;
@@ -145,6 +162,10 @@ private:
     std::optional<vesc::FWVersion::Response> express_fw_;
     std::optional<vesc::FWVersion::Response> bms_fw_;
 
+    // Refloat install sub-state
+    InstallPhase install_phase_ = InstallPhase::LispErase;
+    size_t install_offset_ = 0;
+
     // Per-target helpers (consolidate Express/BMS/VESC branching)
     std::optional<uint8_t> find_can_id(UpdateTarget target) const;
     const char* label_for(UpdateTarget target) const;
@@ -164,6 +185,10 @@ private:
 
     // Common logic: advance from a CheckFW step to the next one or to VESC check
     void advance_to_next_fw_check();
+
+    // Refloat install helpers
+    void send_install_command();
+    void handle_install_response(vesc::CommPacketID cmd, const uint8_t* data, size_t len);
 };
 
 } // namespace nosedive

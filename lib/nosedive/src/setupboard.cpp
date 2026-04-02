@@ -177,6 +177,8 @@ void SetupBoard::retry() {
 }
 
 void SetupBoard::skip() {
+    // Cannot skip Refloat installation
+    if (state_.step == SetupStep::InstallRefloat) return;
     state_.error.clear();
     advance();
 }
@@ -302,7 +304,9 @@ void SetupBoard::send_commands_for_step() {
         break;
 
     case SetupStep::InstallRefloat:
-        send_fw_update(UpdateTarget::VESC);
+        install_phase_ = InstallPhase::LispErase;
+        install_offset_ = 0;
+        send_install_command();
         break;
 
     case SetupStep::DetectBattery:
@@ -377,11 +381,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         break;
 
     case SetupStep::InstallRefloat:
-        if (cmd == vesc::CommPacketID::WriteNewAppData) {
-            has_refloat = true;
-            set_step(SetupStep::InstallRefloat, "Refloat installed");
-            advance();
-        }
+        handle_install_response(cmd, data, len);
         break;
 
     case SetupStep::DetectBattery:
@@ -437,6 +437,149 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         break;
 
     default:
+        break;
+    }
+}
+
+// --- Refloat install sub-state machine ---
+
+void SetupBoard::send_install_command() {
+    if (!send_cb_) return;
+
+    switch (install_phase_) {
+    case InstallPhase::LispErase:
+        set_step(SetupStep::InstallRefloat, "Erasing Lisp code...");
+        send_cb_({static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode)});
+        break;
+
+    case InstallPhase::LispWrite: {
+        if (!refloat_package || refloat_package->lisp_data.empty()) {
+            set_error("No Refloat package loaded");
+            return;
+        }
+        const auto& data = refloat_package->lisp_data;
+        size_t remaining = data.size() - install_offset_;
+        size_t chunk = std::min(remaining, kUploadChunkSize);
+
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "Uploading Lisp code... %zu%%",
+            install_offset_ * 100 / data.size());
+        set_step(SetupStep::InstallRefloat, buf);
+
+        // [cmd(1), offset(4 BE), data(N)]
+        std::vector<uint8_t> pkt;
+        pkt.reserve(5 + chunk);
+        pkt.push_back(static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode));
+        pkt.push_back(static_cast<uint8_t>((install_offset_ >> 24) & 0xFF));
+        pkt.push_back(static_cast<uint8_t>((install_offset_ >> 16) & 0xFF));
+        pkt.push_back(static_cast<uint8_t>((install_offset_ >> 8) & 0xFF));
+        pkt.push_back(static_cast<uint8_t>(install_offset_ & 0xFF));
+        pkt.insert(pkt.end(), data.data() + install_offset_,
+                   data.data() + install_offset_ + chunk);
+        send_cb_(pkt);
+        break;
+    }
+
+    case InstallPhase::QmlErase:
+        set_step(SetupStep::InstallRefloat, "Erasing QML UI...");
+        send_cb_({static_cast<uint8_t>(vesc::CommPacketID::QmluiErase)});
+        break;
+
+    case InstallPhase::QmlWrite: {
+        if (!refloat_package || refloat_package->qml_data.empty()) {
+            // No QML data — skip to SetRunning
+            install_phase_ = InstallPhase::SetRunning;
+            send_install_command();
+            return;
+        }
+        const auto& data = refloat_package->qml_data;
+        size_t remaining = data.size() - install_offset_;
+        size_t chunk = std::min(remaining, kUploadChunkSize);
+
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "Uploading QML UI... %zu%%",
+            install_offset_ * 100 / data.size());
+        set_step(SetupStep::InstallRefloat, buf);
+
+        std::vector<uint8_t> pkt;
+        pkt.reserve(5 + chunk);
+        pkt.push_back(static_cast<uint8_t>(vesc::CommPacketID::QmluiWrite));
+        pkt.push_back(static_cast<uint8_t>((install_offset_ >> 24) & 0xFF));
+        pkt.push_back(static_cast<uint8_t>((install_offset_ >> 16) & 0xFF));
+        pkt.push_back(static_cast<uint8_t>((install_offset_ >> 8) & 0xFF));
+        pkt.push_back(static_cast<uint8_t>(install_offset_ & 0xFF));
+        pkt.insert(pkt.end(), data.data() + install_offset_,
+                   data.data() + install_offset_ + chunk);
+        send_cb_(pkt);
+        break;
+    }
+
+    case InstallPhase::SetRunning:
+        set_step(SetupStep::InstallRefloat, "Starting Lisp runtime...");
+        send_cb_({static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning), 1});
+        break;
+
+    case InstallPhase::Done:
+        break;
+    }
+}
+
+void SetupBoard::handle_install_response(vesc::CommPacketID cmd,
+                                          const uint8_t* data, size_t len) {
+    switch (install_phase_) {
+    case InstallPhase::LispErase:
+        if (cmd == vesc::CommPacketID::LispEraseCode) {
+            install_phase_ = InstallPhase::LispWrite;
+            install_offset_ = 0;
+            send_install_command();
+        }
+        break;
+
+    case InstallPhase::LispWrite:
+        if (cmd == vesc::CommPacketID::LispWriteCode && refloat_package) {
+            const auto& ld = refloat_package->lisp_data;
+            size_t chunk = std::min(ld.size() - install_offset_, kUploadChunkSize);
+            install_offset_ += chunk;
+            if (install_offset_ >= ld.size()) {
+                // Lisp upload complete → erase QML
+                install_phase_ = InstallPhase::QmlErase;
+                install_offset_ = 0;
+            }
+            send_install_command();
+        }
+        break;
+
+    case InstallPhase::QmlErase:
+        if (cmd == vesc::CommPacketID::QmluiErase) {
+            install_phase_ = InstallPhase::QmlWrite;
+            install_offset_ = 0;
+            send_install_command();
+        }
+        break;
+
+    case InstallPhase::QmlWrite:
+        if (cmd == vesc::CommPacketID::QmluiWrite && refloat_package) {
+            const auto& qd = refloat_package->qml_data;
+            size_t chunk = std::min(qd.size() - install_offset_, kUploadChunkSize);
+            install_offset_ += chunk;
+            if (install_offset_ >= qd.size()) {
+                install_phase_ = InstallPhase::SetRunning;
+                install_offset_ = 0;
+            }
+            send_install_command();
+        }
+        break;
+
+    case InstallPhase::SetRunning:
+        if (cmd == vesc::CommPacketID::LispSetRunning) {
+            install_phase_ = InstallPhase::Done;
+            has_refloat = true;
+            set_step(SetupStep::InstallRefloat, "Refloat installed");
+            advance();
+        }
+        break;
+
+    case InstallPhase::Done:
         break;
     }
 }

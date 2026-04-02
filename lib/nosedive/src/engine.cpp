@@ -106,6 +106,14 @@ void Engine::dismiss_wizard() {
     show_wizard_ = false;
 }
 
+bool Engine::load_refloat_package(const uint8_t* data, size_t len) {
+    std::lock_guard lock(mu_);
+    auto pkg = vesc::VescPackage::parse(data, len);
+    if (!pkg) return false;
+    refloat_pkg_ = std::move(*pkg);
+    return true;
+}
+
 void Engine::install_refloat() {
     std::unique_lock lock(mu_);
     refloat_installing_ = true;
@@ -138,6 +146,13 @@ void Engine::handle_payload(const uint8_t* data, size_t len) {
             break;
         case static_cast<uint8_t>(CommPacketID::WriteNewAppData):
             handle_write_new_app_data();
+            break;
+        // Lisp/QML install responses — handled by setup wizard
+        case static_cast<uint8_t>(CommPacketID::LispEraseCode):
+        case static_cast<uint8_t>(CommPacketID::LispWriteCode):
+        case static_cast<uint8_t>(CommPacketID::QmluiErase):
+        case static_cast<uint8_t>(CommPacketID::QmluiWrite):
+        case static_cast<uint8_t>(CommPacketID::LispSetRunning):
             break;
         default: {
             std::string msg = "unknown command: " + std::to_string(cmd);
@@ -350,6 +365,7 @@ void Engine::setup_start() {
     setup_.can_device_ids = can_device_ids_;
     setup_.main_fw = main_fw_;
     setup_.has_refloat = main_fw_ && main_fw_->custom_config_count > 0;
+    setup_.refloat_package = refloat_pkg_ ? &*refloat_pkg_ : nullptr;
     setup_.start();
     pending_setup_ = true;
     flush_pending(lock);

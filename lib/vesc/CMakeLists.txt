@@ -4,16 +4,20 @@ project(vesc VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+find_package(ZLIB REQUIRED)
+
 set(VESC_SOURCES
     src/crc.cpp
     src/protocol.cpp
     src/commands.cpp
     src/refloat.cpp
     src/connection.cpp
+    src/vescpkg.cpp
 )
 
 add_library(vesc STATIC ${VESC_SOURCES})
 target_include_directories(vesc PUBLIC include)
+target_link_libraries(vesc PUBLIC ZLIB::ZLIB)
 
 option(VESC_BUILD_TESTS "Build tests" ON)
 if(VESC_BUILD_TESTS)

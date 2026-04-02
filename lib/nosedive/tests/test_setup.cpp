@@ -1,8 +1,42 @@
 #include "nosedive/nosedive.hpp"
 #include "nosedive/setupboard.hpp"
+#include "vesc/vescpkg.hpp"
 #include "test_helpers.hpp"
 #include <vector>
 #include <string>
+
+// A small fake VescPackage for testing installs
+static vesc::VescPackage make_test_package() {
+    vesc::VescPackage pkg;
+    pkg.name = "TestRefloat";
+    pkg.lisp_data.resize(50, 0xAA);  // 50 bytes of dummy Lisp
+    pkg.qml_data.resize(30, 0xBB);   // 30 bytes of dummy QML
+    return pkg;
+}
+
+// Simulate the full Refloat install protocol responses.
+// The setup must be at InstallRefloat with a package loaded.
+static void simulate_refloat_install(nosedive::SetupBoard& setup) {
+    // 1. LispEraseCode ack
+    uint8_t lisp_erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode), 1};
+    setup.handle_response(lisp_erase_ack, sizeof(lisp_erase_ack));
+
+    // 2. LispWriteCode acks — one per chunk (50 bytes fits in one chunk of 400)
+    uint8_t lisp_write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode), 1, 0, 0, 0, 0};
+    setup.handle_response(lisp_write_ack, sizeof(lisp_write_ack));
+
+    // 3. QmluiErase ack
+    uint8_t qml_erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::QmluiErase), 1};
+    setup.handle_response(qml_erase_ack, sizeof(qml_erase_ack));
+
+    // 4. QmluiWrite ack — one chunk
+    uint8_t qml_write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::QmluiWrite), 1, 0, 0, 0, 0};
+    setup.handle_response(qml_write_ack, sizeof(qml_write_ack));
+
+    // 5. LispSetRunning ack
+    uint8_t set_running_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning), 1};
+    setup.handle_response(set_running_ack, sizeof(set_running_ack));
+}
 
 // --- Setup wizard integration test ---
 static void test_setup_wizard() {
@@ -218,6 +252,8 @@ static void test_setup_wizard_with_can() {
     setup.can_device_ids = {10, 253};
     setup.main_fw = std::nullopt;
     setup.has_refloat = false;
+    auto test_pkg = make_test_package();
+    setup.refloat_package = &test_pkg;
 
     setup.start();
 
@@ -262,9 +298,8 @@ static void test_setup_wizard_with_can() {
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
               "wizard_can: at InstallRefloat after all updates");
 
-    // Simulate Refloat install complete
-    uint8_t install_resp[] = {static_cast<uint8_t>(vesc::CommPacketID::WriteNewAppData)};
-    setup.handle_response(install_resp, 1);
+    // Simulate full Refloat install protocol
+    simulate_refloat_install(setup);
 
     // Should be past InstallRefloat now
     ASSERT(static_cast<uint8_t>(setup.state().step) >
@@ -481,6 +516,197 @@ static void test_express_fw_update() {
               "express_update: at CheckFWVESC after Express update");
 }
 
+// --- Refloat install flow ---
+static void test_refloat_install() {
+    nosedive::SetupBoard setup;
+
+    std::vector<nosedive::SetupStep> steps_seen;
+    std::vector<std::string> details_seen;
+    std::vector<std::vector<uint8_t>> sent;
+
+    setup.set_state_callback([&](const nosedive::SetupState& s) {
+        steps_seen.push_back(s.step);
+        details_seen.push_back(s.detail);
+    });
+    setup.set_send_callback([&](const std::vector<uint8_t>& payload) {
+        sent.push_back(payload);
+    });
+
+    // Up-to-date FW, no Refloat
+    vesc::FWVersion::Response fw;
+    fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+    fw.uuid = "test-uuid";
+    setup.can_device_ids = {};
+    setup.main_fw = fw;
+    setup.has_refloat = false;
+
+    auto pkg = make_test_package();
+    setup.refloat_package = &pkg;
+
+    setup.start();
+
+    // Should be at InstallRefloat (FW is up-to-date, auto-advances)
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "refloat_install: at InstallRefloat");
+
+    // Should have sent LispEraseCode
+    ASSERT(!sent.empty(), "refloat_install: sent erase command");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode),
+              "refloat_install: first command is LispEraseCode");
+
+    // Skip should be blocked
+    auto step_before = setup.state().step;
+    setup.skip();
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(step_before),
+              "refloat_install: skip is blocked during install");
+
+    // Drive the full install
+    sent.clear();
+
+    // 1. LispEraseCode ack → should send LispWriteCode chunk
+    uint8_t lisp_erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode), 1};
+    setup.handle_response(lisp_erase_ack, sizeof(lisp_erase_ack));
+    ASSERT(!sent.empty(), "refloat_install: sent lisp write after erase");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode),
+              "refloat_install: sent LispWriteCode");
+    // Verify the chunk contains offset 0 and data
+    ASSERT(sent.back().size() == 5 + 50, "refloat_install: lisp chunk is full 50 bytes");
+
+    // 2. LispWriteCode ack → should send QmluiErase
+    sent.clear();
+    uint8_t lisp_write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode), 1, 0, 0, 0, 0};
+    setup.handle_response(lisp_write_ack, sizeof(lisp_write_ack));
+    ASSERT(!sent.empty(), "refloat_install: sent qml erase after lisp");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::QmluiErase),
+              "refloat_install: sent QmluiErase");
+
+    // 3. QmluiErase ack → should send QmluiWrite chunk
+    sent.clear();
+    uint8_t qml_erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::QmluiErase), 1};
+    setup.handle_response(qml_erase_ack, sizeof(qml_erase_ack));
+    ASSERT(!sent.empty(), "refloat_install: sent qml write after erase");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::QmluiWrite),
+              "refloat_install: sent QmluiWrite");
+    ASSERT(sent.back().size() == 5 + 30, "refloat_install: qml chunk is full 30 bytes");
+
+    // 4. QmluiWrite ack → should send LispSetRunning
+    sent.clear();
+    uint8_t qml_write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::QmluiWrite), 1, 0, 0, 0, 0};
+    setup.handle_response(qml_write_ack, sizeof(qml_write_ack));
+    ASSERT(!sent.empty(), "refloat_install: sent set_running after qml");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning),
+              "refloat_install: sent LispSetRunning");
+    ASSERT(sent.back().size() == 2 && sent.back()[1] == 1,
+           "refloat_install: LispSetRunning payload is [cmd, 1]");
+
+    // 5. LispSetRunning ack → should advance past InstallRefloat
+    uint8_t running_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning), 1};
+    setup.handle_response(running_ack, sizeof(running_ack));
+
+    ASSERT(setup.has_refloat, "refloat_install: has_refloat set after install");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+              "refloat_install: at DetectBattery after install");
+
+    // Verify progress messages were reported
+    bool saw_lisp_progress = false;
+    bool saw_qml_progress = false;
+    for (auto& d : details_seen) {
+        if (d.find("Uploading Lisp") != std::string::npos) saw_lisp_progress = true;
+        if (d.find("Uploading QML") != std::string::npos) saw_qml_progress = true;
+    }
+    ASSERT(saw_lisp_progress, "refloat_install: saw Lisp upload progress");
+    ASSERT(saw_qml_progress, "refloat_install: saw QML upload progress");
+}
+
+// --- Refloat install with multi-chunk upload ---
+static void test_refloat_install_chunked() {
+    nosedive::SetupBoard setup;
+
+    std::vector<std::vector<uint8_t>> sent;
+    setup.set_state_callback([&](const nosedive::SetupState&) {});
+    setup.set_send_callback([&](const std::vector<uint8_t>& payload) {
+        sent.push_back(payload);
+    });
+
+    // Create a package with data larger than one chunk (400 bytes)
+    vesc::VescPackage pkg;
+    pkg.name = "BigRefloat";
+    pkg.lisp_data.resize(900, 0xCC);  // 900 bytes = 3 chunks (400+400+100)
+    pkg.qml_data.resize(10, 0xDD);    // small QML
+
+    vesc::FWVersion::Response fw;
+    fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+    setup.can_device_ids = {};
+    setup.main_fw = fw;
+    setup.has_refloat = false;
+    setup.refloat_package = &pkg;
+
+    setup.start();
+
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "chunked: at InstallRefloat");
+
+    // LispEraseCode ack
+    uint8_t erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode), 1};
+    setup.handle_response(erase_ack, sizeof(erase_ack));
+
+    // Should have sent first LispWriteCode chunk (400 bytes)
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode),
+              "chunked: sent first lisp chunk");
+    ASSERT(sent.back().size() == 5 + 400, "chunked: first chunk is 400 bytes");
+
+    // Ack chunk 1 → should send chunk 2
+    sent.clear();
+    uint8_t write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode), 1, 0, 0, 0, 0};
+    setup.handle_response(write_ack, sizeof(write_ack));
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode),
+              "chunked: sent second lisp chunk");
+    ASSERT(sent.back().size() == 5 + 400, "chunked: second chunk is 400 bytes");
+    // Verify offset is 400 in the packet
+    ASSERT_EQ(sent.back()[1], 0, "chunked: offset byte 0");
+    ASSERT_EQ(sent.back()[2], 0, "chunked: offset byte 1");
+    ASSERT_EQ(sent.back()[3], 1, "chunked: offset byte 2 (400>>8=1)");
+    ASSERT_EQ(sent.back()[4], static_cast<uint8_t>(400 & 0xFF), "chunked: offset byte 3 (400&0xFF)");
+
+    // Ack chunk 2 → should send chunk 3 (100 bytes remaining)
+    sent.clear();
+    setup.handle_response(write_ack, sizeof(write_ack));
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode),
+              "chunked: sent third lisp chunk");
+    ASSERT(sent.back().size() == 5 + 100, "chunked: third chunk is 100 bytes");
+
+    // Ack chunk 3 → lisp done, should send QmluiErase
+    sent.clear();
+    setup.handle_response(write_ack, sizeof(write_ack));
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::QmluiErase),
+              "chunked: sent QmluiErase after all lisp chunks");
+
+    // Complete the rest of the install quickly
+    uint8_t qml_erase_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::QmluiErase), 1};
+    setup.handle_response(qml_erase_ack, sizeof(qml_erase_ack));
+    uint8_t qml_write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::QmluiWrite), 1, 0, 0, 0, 0};
+    setup.handle_response(qml_write_ack, sizeof(qml_write_ack));
+    uint8_t running_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning), 1};
+    setup.handle_response(running_ack, sizeof(running_ack));
+
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+              "chunked: at DetectBattery after full install");
+}
+
 int main() {
     test_setup_wizard();
     test_setup_wizard_with_can();
@@ -491,6 +717,8 @@ int main() {
     test_fw_update_flow();
     test_prepopulated_outdated_fw();
     test_express_fw_update();
+    test_refloat_install();
+    test_refloat_install_chunked();
 
     std::printf("\n%d/%d setup tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

@@ -2,6 +2,7 @@
 
 #include "vesc/commands.hpp"
 #include "vesc/protocol.hpp"
+#include "vesc/vescpkg.hpp"
 #include "nosedive/storage.hpp"
 #include "nosedive/setupboard.hpp"
 #include <cstdint>
@@ -64,6 +65,10 @@ public:
     void install_refloat();
     void dismiss_wizard();
 
+    /// Load a Refloat .vescpkg for the setup wizard to install.
+    /// Returns true if the package was parsed successfully.
+    bool load_refloat_package(const uint8_t* data, size_t len);
+
     // --- Wizard ---
     void set_setup_callback(SetupCallback cb);
     void setup_start();
@@ -122,6 +127,7 @@ private:
     SetupBoard setup_;
     SetupCallback setup_external_cb_;
     bool pending_setup_ = false;
+    std::optional<vesc::VescPackage> refloat_pkg_;
 
     // Board type guess result (cached)
     mutable std::string guessed_type_cache_;
