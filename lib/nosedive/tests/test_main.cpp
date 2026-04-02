@@ -1,84 +1,83 @@
-// Minimal test runner — no dependencies
 #include "nosedive/nosedive.hpp"
 #include "nosedive/ffi.h"
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cmath>
 
-#include "test_helpers.hpp"
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
+
 // --- CRC tests ---
-static void test_crc16() {
-    // Known VESC CRC: empty-ish payload
+TEST_CASE("CRC16 is non-zero and deterministic for non-empty input", "[crc]") {
     uint8_t data[] = {0x04}; // COMM_GET_VALUES
     uint16_t crc = vesc::crc16(data, 1);
     // Just verify it returns something non-zero and deterministic
-    ASSERT(crc != 0, "crc16 non-zero for non-empty input");
-    ASSERT_EQ(vesc::crc16(data, 1), crc, "crc16 deterministic");
+    REQUIRE(crc != 0);
+    REQUIRE(vesc::crc16(data, 1) == crc);
 
     // (nd_crc16 removed from FFI — internal only)
 }
 
 // --- Packet encode/decode round-trip ---
-static void test_packet_roundtrip_short() {
+TEST_CASE("Packet encode/decode round-trip for short payload", "[packet]") {
     uint8_t payload[] = {0x04};
     auto pkt = vesc::encode_packet(payload, 1);
-    ASSERT(!pkt.empty(), "encode_packet short non-empty");
-    ASSERT_EQ(pkt[0], 0x02, "short packet starts with 0x02");
-    ASSERT_EQ(pkt[1], 1, "short packet length byte");
-    ASSERT_EQ(pkt.back(), 0x03, "packet ends with 0x03");
+    REQUIRE(!pkt.empty());
+    REQUIRE(pkt[0] == 0x02);
+    REQUIRE(pkt[1] == 1);
+    REQUIRE(pkt.back() == 0x03);
 
     auto decoded = vesc::decode_packet(pkt.data(), pkt.size());
-    ASSERT(decoded.has_value(), "decode_packet succeeds");
-    ASSERT_EQ(decoded->payload.size(), 1u, "decoded payload size");
-    ASSERT_EQ(decoded->payload[0], 0x04, "decoded payload content");
-    ASSERT_EQ(decoded->bytes_consumed, pkt.size(), "consumed all bytes");
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->payload.size() == 1u);
+    REQUIRE(decoded->payload[0] == 0x04);
+    REQUIRE(decoded->bytes_consumed == pkt.size());
 }
 
-static void test_packet_roundtrip_long() {
+TEST_CASE("Packet encode/decode round-trip for long payload", "[packet]") {
     // Create a 300-byte payload (long packet)
     std::vector<uint8_t> payload(300, 0xAB);
     payload[0] = 0x14; // some command
     auto pkt = vesc::encode_packet(payload.data(), payload.size());
-    ASSERT(!pkt.empty(), "encode_packet long non-empty");
-    ASSERT_EQ(pkt[0], 0x03, "long packet starts with 0x03");
+    REQUIRE(!pkt.empty());
+    REQUIRE(pkt[0] == 0x03);
 
     auto decoded = vesc::decode_packet(pkt.data(), pkt.size());
-    ASSERT(decoded.has_value(), "decode long packet succeeds");
-    ASSERT_EQ(decoded->payload.size(), 300u, "decoded long payload size");
-    ASSERT_EQ(decoded->payload[0], 0x14, "decoded long payload first byte");
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->payload.size() == 300u);
+    REQUIRE(decoded->payload[0] == 0x14);
 }
 
 // --- Buffer helpers ---
-static void test_buffer_int16() {
+TEST_CASE("Buffer int16 round-trip", "[buffer]") {
     vesc::Buffer buf;
     buf.append_int16(-1234);
     buf.append_int16(5678);
 
     vesc::Buffer reader(buf.vec());
-    ASSERT_EQ(reader.read_int16(), -1234, "int16 round-trip negative");
-    ASSERT_EQ(reader.read_int16(), 5678, "int16 round-trip positive");
+    REQUIRE(reader.read_int16() == -1234);
+    REQUIRE(reader.read_int16() == 5678);
 }
 
-static void test_buffer_int32() {
+TEST_CASE("Buffer int32 and uint32 round-trip", "[buffer]") {
     vesc::Buffer buf;
     buf.append_int32(-123456);
     buf.append_uint32(0xDEADBEEF);
 
     vesc::Buffer reader(buf.vec());
-    ASSERT_EQ(reader.read_int32(), -123456, "int32 round-trip");
-    ASSERT_EQ(reader.read_uint32(), 0xDEADBEEFu, "uint32 round-trip");
+    REQUIRE(reader.read_int32() == -123456);
+    REQUIRE(reader.read_uint32() == 0xDEADBEEFu);
 }
 
-static void test_buffer_float16() {
+TEST_CASE("Buffer float16 round-trip", "[buffer]") {
     vesc::Buffer buf;
     buf.append_float16(25.5, 10.0);
 
     vesc::Buffer reader(buf.vec());
-    ASSERT_NEAR(reader.read_float16(10.0), 25.5, 0.11, "float16 round-trip");
+    REQUIRE_THAT(reader.read_float16(10.0), Catch::Matchers::WithinAbs(25.5, 0.11));
 }
 
-static void test_buffer_float32_auto() {
+TEST_CASE("Buffer float32_auto round-trip", "[buffer]") {
     vesc::Buffer buf;
     double values[] = {0.0, 1.0, -1.0, 3.14159, 1e-7, 1e7};
     for (double v : values) {
@@ -89,28 +88,28 @@ static void test_buffer_float32_auto() {
     for (double v : values) {
         double got = reader.read_float32_auto();
         if (v == 0.0) {
-            ASSERT_EQ(got, 0.0, "float32_auto zero");
+            REQUIRE(got == 0.0);
         } else {
             double rel = std::fabs((got - v) / v);
-            ASSERT(rel < 1e-6, "float32_auto round-trip precision");
+            REQUIRE(rel < 1e-6);
         }
     }
 }
 
-static void test_buffer_string() {
+TEST_CASE("Buffer string round-trip", "[buffer]") {
     vesc::Buffer buf;
     buf.append_string("hello");
     buf.append_string("world");
 
     vesc::Buffer reader(buf.vec());
-    ASSERT(reader.read_string() == "hello", "string round-trip 1");
-    ASSERT(reader.read_string() == "world", "string round-trip 2");
+    REQUIRE(reader.read_string() == "hello");
+    REQUIRE(reader.read_string() == "world");
 }
 
 // (test_ffi_packet removed — nd_encode/decode_packet removed from FFI)
 
 // --- Profile loading ---
-static void test_profile_load() {
+TEST_CASE("Profile load from JSON", "[profile]") {
     const char* json = R"({
         "name": "Test Board",
         "manufacturer": "TestCo",
@@ -168,50 +167,49 @@ static void test_profile_load() {
     })";
 
     auto profile = nosedive::load_profile(json);
-    ASSERT(profile.has_value(), "load_profile succeeds");
-    ASSERT(profile->name == "Test Board", "profile name");
-    ASSERT(profile->manufacturer == "TestCo", "profile manufacturer");
-    ASSERT_EQ(profile->motor.pole_pairs, 15, "profile pole pairs");
-    ASSERT_NEAR(profile->motor.resistance, 0.088, 1e-6, "profile resistance");
-    ASSERT_NEAR(profile->motor.inductance, 0.000233, 1e-9, "profile inductance");
-    ASSERT_NEAR(profile->motor.flux_linkage, 0.028, 1e-6, "profile flux");
-    ASSERT_EQ(profile->battery.series_cells, 20, "profile series cells");
-    ASSERT_NEAR(profile->battery.capacity_wh, 576.0, 0.1, "profile capacity");
-    ASSERT_EQ(static_cast<int>(profile->motor.hall_sensor_table.size()), 8, "hall table size");
-    ASSERT_EQ(profile->motor.hall_sensor_table[0], 255, "hall table entry 0");
-    ASSERT_EQ(profile->motor.hall_sensor_table[1], 1, "hall table entry 1");
+    REQUIRE(profile.has_value());
+    REQUIRE(profile->name == "Test Board");
+    REQUIRE(profile->manufacturer == "TestCo");
+    REQUIRE(profile->motor.pole_pairs == 15);
+    REQUIRE_THAT(profile->motor.resistance, Catch::Matchers::WithinAbs(0.088, 1e-6));
+    REQUIRE_THAT(profile->motor.inductance, Catch::Matchers::WithinAbs(0.000233, 1e-9));
+    REQUIRE_THAT(profile->motor.flux_linkage, Catch::Matchers::WithinAbs(0.028, 1e-6));
+    REQUIRE(profile->battery.series_cells == 20);
+    REQUIRE_THAT(profile->battery.capacity_wh, Catch::Matchers::WithinAbs(576.0, 0.1));
+    REQUIRE(static_cast<int>(profile->motor.hall_sensor_table.size()) == 8);
+    REQUIRE(profile->motor.hall_sensor_table[0] == 255);
+    REQUIRE(profile->motor.hall_sensor_table[1] == 1);
 
     // Computed values
     double erpm_per_mps = profile->erpm_per_mps();
-    ASSERT(erpm_per_mps > 0, "erpm_per_mps positive");
+    REQUIRE(erpm_per_mps > 0);
     double speed = profile->speed_from_erpm(10000);
-    ASSERT(speed > 0, "speed_from_erpm positive");
+    REQUIRE(speed > 0);
     double pct = profile->battery_percentage(72.0);
-    ASSERT(pct > 0 && pct < 100, "battery_percentage mid-range");
-    ASSERT_NEAR(profile->battery_percentage(84.0), 100.0, 0.01, "battery 100%");
-    ASSERT_NEAR(profile->battery_percentage(60.0), 0.0, 0.01, "battery 0%");
-
+    REQUIRE(pct > 0);
+    REQUIRE(pct < 100);
+    REQUIRE_THAT(profile->battery_percentage(84.0), Catch::Matchers::WithinAbs(100.0, 0.01));
+    REQUIRE_THAT(profile->battery_percentage(60.0), Catch::Matchers::WithinAbs(0.0, 0.01));
 }
 
 // --- PacketDecoder tests ---
-static void test_packet_decoder_single() {
+TEST_CASE("PacketDecoder reassembles a single full packet", "[packet]") {
     vesc::PacketDecoder dec;
-
     uint8_t payload[] = {0x04, 0x01};
     auto pkt = vesc::encode_packet(payload, 2);
 
     dec.feed(pkt.data(), pkt.size());
-    ASSERT(dec.has_packet(), "decoder has packet after full feed");
-    ASSERT_EQ(dec.packet_count(), 1u, "decoder count = 1");
+    REQUIRE(dec.has_packet());
+    REQUIRE(dec.packet_count() == 1u);
 
     auto p = dec.pop();
-    ASSERT_EQ(p.size(), 2u, "decoded payload size");
-    ASSERT_EQ(p[0], 0x04, "decoded payload byte 0");
-    ASSERT_EQ(p[1], 0x01, "decoded payload byte 1");
-    ASSERT(!dec.has_packet(), "decoder empty after pop");
+    REQUIRE(p.size() == 2u);
+    REQUIRE(p[0] == 0x04);
+    REQUIRE(p[1] == 0x01);
+    REQUIRE(!dec.has_packet());
 }
 
-static void test_packet_decoder_chunked() {
+TEST_CASE("PacketDecoder reassembles a packet fed in 20-byte chunks", "[packet]") {
     // Simulate BLE 20-byte MTU chunking
     vesc::PacketDecoder dec;
 
@@ -227,13 +225,13 @@ static void test_packet_decoder_chunked() {
         offset += chunk;
     }
 
-    ASSERT(dec.has_packet(), "decoder reassembled chunked packet");
+    REQUIRE(dec.has_packet());
     auto p = dec.pop();
-    ASSERT_EQ(p.size(), 100u, "reassembled payload size");
-    ASSERT_EQ(p[0], 0x14, "reassembled payload first byte");
+    REQUIRE(p.size() == 100u);
+    REQUIRE(p[0] == 0x14);
 }
 
-static void test_packet_decoder_multiple() {
+TEST_CASE("PacketDecoder handles multiple packets in one feed", "[packet]") {
     vesc::PacketDecoder dec;
 
     uint8_t p1[] = {0x04};
@@ -247,60 +245,60 @@ static void test_packet_decoder_multiple() {
     combined.insert(combined.end(), pkt2.begin(), pkt2.end());
     dec.feed(combined.data(), combined.size());
 
-    ASSERT_EQ(dec.packet_count(), 2u, "decoder found 2 packets");
+    REQUIRE(dec.packet_count() == 2u);
     auto r1 = dec.pop();
-    ASSERT_EQ(r1[0], 0x04, "first packet cmd");
+    REQUIRE(r1[0] == 0x04);
     auto r2 = dec.pop();
-    ASSERT_EQ(r2[0], 0x00, "second packet cmd");
+    REQUIRE(r2[0] == 0x00);
 }
 
 // --- Refloat tests ---
-static void test_refloat_command_builders() {
+TEST_CASE("Refloat command builders produce correctly encoded payloads", "[refloat]") {
     auto cmd = vesc::refloat::build_get_all_data(2);
-    ASSERT_EQ(cmd.size(), 3u, "get_all_data size");
-    ASSERT_EQ(cmd[0], 0x65, "magic byte");
-    ASSERT_EQ(cmd[1], 10, "command ID = GetAllData");
-    ASSERT_EQ(cmd[2], 2, "mode byte");
+    REQUIRE(cmd.size() == 3u);
+    REQUIRE(cmd[0] == 0x65);
+    REQUIRE(cmd[1] == 10);
+    REQUIRE(cmd[2] == 2);
 
     auto rt_cmd = vesc::refloat::build_get_rt_data();
-    ASSERT_EQ(rt_cmd.size(), 2u, "get_rt_data size");
-    ASSERT_EQ(rt_cmd[0], 0x65, "rt magic");
-    ASSERT_EQ(rt_cmd[1], 1, "rt command ID");
+    REQUIRE(rt_cmd.size() == 2u);
+    REQUIRE(rt_cmd[0] == 0x65);
+    REQUIRE(rt_cmd[1] == 1);
 
     auto info_cmd = vesc::refloat::build_info_request();
-    ASSERT_EQ(info_cmd.size(), 3u, "info request size");
-    ASSERT_EQ(info_cmd[0], 0x65, "info magic");
-    ASSERT_EQ(info_cmd[1], 0, "info command ID");
-    ASSERT_EQ(info_cmd[2], 2, "info version");
+    REQUIRE(info_cmd.size() == 3u);
+    REQUIRE(info_cmd[0] == 0x65);
+    REQUIRE(info_cmd[1] == 0);
+    REQUIRE(info_cmd[2] == 2);
 }
 
-static void test_refloat_compat_decoders() {
+TEST_CASE("Refloat compatibility decoders map legacy values correctly", "[refloat]") {
     using namespace vesc::refloat;
 
     // State compat: 0 = startup
-    ASSERT(decode_state_compat(0) == RunState::Startup, "compat state 0 = startup");
+    REQUIRE(decode_state_compat(0) == RunState::Startup);
     // State compat: 1-5 = running
-    ASSERT(decode_state_compat(1) == RunState::Running, "compat state 1 = running");
-    ASSERT(decode_state_compat(5) == RunState::Running, "compat state 5 = running");
+    REQUIRE(decode_state_compat(1) == RunState::Running);
+    REQUIRE(decode_state_compat(5) == RunState::Running);
     // State compat: 15 = disabled
-    ASSERT(decode_state_compat(15) == RunState::Disabled, "compat state 15 = disabled");
+    REQUIRE(decode_state_compat(15) == RunState::Disabled);
 
     // Stop compat
-    ASSERT(decode_stop_compat(6) == StopCondition::Pitch, "stop 6 = pitch");
-    ASSERT(decode_stop_compat(9) == StopCondition::SwitchFull, "stop 9 = switch_full");
-    ASSERT(decode_stop_compat(0) == StopCondition::None, "stop 0 = none");
+    REQUIRE(decode_stop_compat(6) == StopCondition::Pitch);
+    REQUIRE(decode_stop_compat(9) == StopCondition::SwitchFull);
+    REQUIRE(decode_stop_compat(0) == StopCondition::None);
 
     // SAT compat
-    ASSERT(decode_sat_compat(0) == SAT::Centering, "sat 0 = centering");
-    ASSERT(decode_sat_compat(2) == SAT::None, "sat 2 = none");
-    ASSERT(decode_sat_compat(7) == SAT::PBSpeed, "sat 7 = pb_speed");
+    REQUIRE(decode_sat_compat(0) == SAT::Centering);
+    REQUIRE(decode_sat_compat(2) == SAT::None);
+    REQUIRE(decode_sat_compat(7) == SAT::PBSpeed);
 }
 
 // (BLETransport and nd_transport tests removed — transport is now internal to engine)
 
 // --- Storage C++ round-trip ---
 // --- FW version parsing ---
-static void test_parse_fw_version() {
+TEST_CASE("FW version response decodes correctly", "[fw]") {
     // Build a realistic FW version payload:
     // [cmd=0][major=6][minor=5][hw="TestHW"\0][uuid:12][isPaired=0][fwTest=0][hwType=0]
     // [customConfigCount=1][hasPhaseFilters=0][qmlHW=0][qmlApp=0][nrfFlags=0][pkgName="Refloat"\0]
@@ -325,14 +323,14 @@ static void test_parse_fw_version() {
     payload.push_back(0);
 
     auto fw = vesc::FWVersion::Response::decode(payload.data(), payload.size());
-    ASSERT(fw.has_value(), "parse_fw_version: success");
-    ASSERT_EQ(fw->major, 6, "parse_fw_version: major");
-    ASSERT_EQ(fw->minor, 5, "parse_fw_version: minor");
-    ASSERT_EQ(fw->hw_name, "TestHW", "parse_fw_version: hw_name");
-    ASSERT_EQ(fw->uuid.size(), 24u, "parse_fw_version: uuid length");
-    ASSERT_EQ(fw->hw_type, vesc::HWType::VESC, "parse_fw_version: hw_type");
-    ASSERT_EQ(fw->custom_config_count, 1, "parse_fw_version: custom_config_count");
-    ASSERT_EQ(fw->package_name, "Refloat", "parse_fw_version: package_name");
+    REQUIRE(fw.has_value());
+    REQUIRE(fw->major == 6);
+    REQUIRE(fw->minor == 5);
+    REQUIRE(fw->hw_name == "TestHW");
+    REQUIRE(fw->uuid.size() == 24u);
+    REQUIRE(fw->hw_type == vesc::HWType::VESC);
+    REQUIRE(fw->custom_config_count == 1);
+    REQUIRE(fw->package_name == "Refloat");
 
     // Express: hwType=3
     payload[payload.size() - 10] = 3; // hwType offset (approx)
@@ -344,33 +342,33 @@ static void test_parse_fw_version() {
     express.push_back(0); // fwTest
     express.push_back(3); // hwType = VESCExpress
     auto fw2 = vesc::FWVersion::Response::decode(express.data(), express.size());
-    ASSERT(fw2.has_value(), "parse_fw_version express: success");
-    ASSERT_EQ(fw2->hw_type, vesc::HWType::VESCExpress, "parse_fw_version express: type");
+    REQUIRE(fw2.has_value());
+    REQUIRE(fw2->hw_type == vesc::HWType::VESCExpress);
 
     // Too short
     uint8_t bad[] = {0x00, 6};
     auto bad_result = vesc::FWVersion::Response::decode(bad, 2);
-    ASSERT(!bad_result.has_value(), "parse_fw_version: too short");
+    REQUIRE(!bad_result.has_value());
 }
 
 // --- CAN ping parsing ---
-static void test_parse_ping_can() {
+TEST_CASE("PingCAN response decodes device IDs", "[can]") {
     uint8_t payload[] = {62, 10, 253}; // cmd=PingCAN, ids: 10 (BMS), 253 (Express)
     auto r = vesc::PingCAN::Response::decode(payload, 3);
-    ASSERT(r.has_value(), "parse_ping_can: decoded");
-    ASSERT_EQ(r->device_ids.size(), 2u, "parse_ping_can: 2 devices");
-    ASSERT_EQ(r->device_ids[0], 10, "parse_ping_can: BMS");
-    ASSERT_EQ(r->device_ids[1], 253, "parse_ping_can: Express");
+    REQUIRE(r.has_value());
+    REQUIRE(r->device_ids.size() == 2u);
+    REQUIRE(r->device_ids[0] == 10);
+    REQUIRE(r->device_ids[1] == 253);
 
     // Empty response
     uint8_t empty[] = {62};
     auto none = vesc::PingCAN::Response::decode(empty, 1);
-    ASSERT(none.has_value(), "parse_ping_can: empty decoded");
-    ASSERT_EQ(none->device_ids.size(), 0u, "parse_ping_can: empty");
+    REQUIRE(none.has_value());
+    REQUIRE(none->device_ids.size() == 0u);
 }
 
 // --- Refloat info parsing ---
-static void test_parse_refloat_info() {
+TEST_CASE("Refloat info response decodes version and name fields", "[refloat]") {
     // Version 2 format: [cmd][magic][cmdId][version][flags][name:20][major][minor][patch][suffix:20]
     std::vector<uint8_t> payload;
     payload.push_back(36);   // COMM_CUSTOM_APP_DATA
@@ -389,55 +387,55 @@ static void test_parse_refloat_info() {
     for (size_t i = 0; i < 20; i++) payload.push_back(i < suffix.size() ? suffix[i] : 0);
 
     auto info = vesc::parse_refloat_info(payload.data(), payload.size());
-    ASSERT(info.has_value(), "parse_refloat_info: success");
-    ASSERT_EQ(info->major, 1, "parse_refloat_info: major");
-    ASSERT_EQ(info->minor, 3, "parse_refloat_info: minor");
-    ASSERT_EQ(info->patch, 0, "parse_refloat_info: patch");
-    ASSERT_EQ(info->name, "Refloat", "parse_refloat_info: name");
-    ASSERT_EQ(info->suffix, "beta", "parse_refloat_info: suffix");
-    ASSERT_EQ(info->version_string(), "1.3.0-beta", "parse_refloat_info: version_string");
+    REQUIRE(info.has_value());
+    REQUIRE(info->major == 1);
+    REQUIRE(info->minor == 3);
+    REQUIRE(info->patch == 0);
+    REQUIRE(info->name == "Refloat");
+    REQUIRE(info->suffix == "beta");
+    REQUIRE(info->version_string() == "1.3.0-beta");
 }
 
 // --- Command builders ---
-static void test_command_builders() {
+TEST_CASE("Command builders produce correctly encoded byte sequences", "[packet]") {
     auto cmd = std::vector<uint8_t>{static_cast<uint8_t>(vesc::CommPacketID::GetValues)};
-    ASSERT_EQ(cmd.size(), 1u, "build_command: size");
-    ASSERT_EQ(cmd[0], 4, "build_command: GetValues");
+    REQUIRE(cmd.size() == 1u);
+    REQUIRE(cmd[0] == 4);
 
     auto can = vesc::ForwardCAN::Request{.target_id = 253, .inner_payload = vesc::FWVersion::Request{}.encode()}.encode();
-    ASSERT_EQ(can.size(), 3u, "ForwardCAN encode: size");
-    ASSERT_EQ(can[0], 34, "ForwardCAN encode: cmd");
-    ASSERT_EQ(can[1], 253, "ForwardCAN encode: target_id");
-    ASSERT_EQ(can[2], 0, "build_fw_version_request_can: FWVersion cmd");
+    REQUIRE(can.size() == 3u);
+    REQUIRE(can[0] == 34);
+    REQUIRE(can[1] == 253);
+    REQUIRE(can[2] == 0);
 
     auto refloat = vesc::build_refloat_info_request();
-    ASSERT_EQ(refloat.size(), 4u, "build_refloat_info_request: size");
-    ASSERT_EQ(refloat[0], 36, "build_refloat_info_request: CustomAppData");
-    ASSERT_EQ(refloat[1], 0x65, "build_refloat_info_request: magic");
-    ASSERT_EQ(refloat[2], 0x00, "build_refloat_info_request: CommandInfo");
-    ASSERT_EQ(refloat[3], 0x02, "build_refloat_info_request: version");
+    REQUIRE(refloat.size() == 4u);
+    REQUIRE(refloat[0] == 36);
+    REQUIRE(refloat[1] == 0x65);
+    REQUIRE(refloat[2] == 0x00);
+    REQUIRE(refloat[3] == 0x02);
 }
 
 // --- Speed / battery computations ---
-static void test_computed_values() {
+TEST_CASE("Speed from ERPM and battery percentage computations", "[profile]") {
     // Speed from ERPM: erpm / (pole_pairs * 60 / wheel_circ)
     double speed = vesc::speed_from_erpm(10000, 15, 0.8778);
-    ASSERT(speed > 0, "speed_from_erpm: positive");
-    ASSERT_NEAR(speed, 10000.0 / (15.0 * 60.0 / 0.8778), 0.001, "speed_from_erpm: correct");
+    REQUIRE(speed > 0);
+    REQUIRE_THAT(speed, Catch::Matchers::WithinAbs(10000.0 / (15.0 * 60.0 / 0.8778), 0.001));
 
     // Edge cases
-    ASSERT_NEAR(vesc::speed_from_erpm(0, 15, 0.88), 0.0, 0.001, "speed_from_erpm: zero erpm");
-    ASSERT_NEAR(vesc::speed_from_erpm(1000, 0, 0.88), 0.0, 0.001, "speed_from_erpm: zero poles");
+    REQUIRE_THAT(vesc::speed_from_erpm(0, 15, 0.88), Catch::Matchers::WithinAbs(0.0, 0.001));
+    REQUIRE_THAT(vesc::speed_from_erpm(1000, 0, 0.88), Catch::Matchers::WithinAbs(0.0, 0.001));
 
     // Battery percent
-    ASSERT_NEAR(vesc::battery_percent(72.0, 60.0, 84.0), 50.0, 0.01, "battery_percent: 50%");
-    ASSERT_NEAR(vesc::battery_percent(84.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: 100%");
-    ASSERT_NEAR(vesc::battery_percent(60.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: 0%");
-    ASSERT_NEAR(vesc::battery_percent(90.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: clamped max");
-    ASSERT_NEAR(vesc::battery_percent(50.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: clamped min");
+    REQUIRE_THAT(vesc::battery_percent(72.0, 60.0, 84.0), Catch::Matchers::WithinAbs(50.0, 0.01));
+    REQUIRE_THAT(vesc::battery_percent(84.0, 60.0, 84.0), Catch::Matchers::WithinAbs(100.0, 0.01));
+    REQUIRE_THAT(vesc::battery_percent(60.0, 60.0, 84.0), Catch::Matchers::WithinAbs(0.0, 0.01));
+    REQUIRE_THAT(vesc::battery_percent(90.0, 60.0, 84.0), Catch::Matchers::WithinAbs(100.0, 0.01));
+    REQUIRE_THAT(vesc::battery_percent(50.0, 60.0, 84.0), Catch::Matchers::WithinAbs(0.0, 0.01));
 }
 
-static void test_storage_roundtrip() {
+TEST_CASE("Storage AppData serializes and deserializes boards and profiles", "[storage]") {
     nosedive::AppData data;
 
     nosedive::Board b;
@@ -481,50 +479,50 @@ static void test_storage_roundtrip() {
 
     // Serialize to JSON and back
     std::string json = nosedive::app_data_to_json(data);
-    ASSERT(!json.empty(), "storage: JSON not empty");
+    REQUIRE(!json.empty());
 
     auto loaded = nosedive::app_data_from_json(json);
-    ASSERT_EQ(loaded.boards.size(), 1u, "storage: 1 board");
-    ASSERT_EQ(loaded.rider_profiles.size(), 1u, "storage: 1 profile");
-    ASSERT_EQ(loaded.active_profile_id, "profile-uuid-1", "storage: active profile id");
+    REQUIRE(loaded.boards.size() == 1u);
+    REQUIRE(loaded.rider_profiles.size() == 1u);
+    REQUIRE(loaded.active_profile_id == "profile-uuid-1");
 
     auto& lb = loaded.boards[0];
-    ASSERT_EQ(lb.id, "board-uuid-123", "storage: board id");
-    ASSERT_EQ(lb.name, "My OneWheel", "storage: board name");
-    ASSERT_EQ(lb.ble_name, "OW-1234", "storage: board ble_name");
-    ASSERT_EQ(lb.hw_name, "Little FOCer V3.1", "storage: board hw_name");
-    ASSERT_EQ(lb.fw_major, 6, "storage: board fw_major");
-    ASSERT_EQ(lb.fw_minor, 2, "storage: board fw_minor");
-    ASSERT_EQ(lb.motor_pole_pairs, 15, "storage: board motor_pole_pairs");
-    ASSERT_NEAR(lb.wheel_circumference_m, 0.92, 0.001, "storage: board wheel_circ");
-    ASSERT_EQ(lb.battery_series_cells, 20, "storage: board battery_cells");
-    ASSERT_NEAR(lb.battery_voltage_min, 60.0, 0.01, "storage: board batt_min");
-    ASSERT_NEAR(lb.battery_voltage_max, 84.0, 0.01, "storage: board batt_max");
-    ASSERT_NEAR(lb.lifetime_distance_m, 12345.67, 0.01, "storage: board distance");
-    ASSERT_EQ(lb.ride_count, 42, "storage: board ride_count");
-    ASSERT(lb.wizard_complete, "storage: board wizard_complete");
-    ASSERT_EQ(lb.refloat_version, "1.3.0", "storage: board refloat_version");
-    ASSERT_EQ(lb.last_connected, 1700000000, "storage: board last_connected");
-    ASSERT_EQ(lb.active_profile_id, "profile-uuid-1", "storage: board active_profile_id");
+    REQUIRE(lb.id == "board-uuid-123");
+    REQUIRE(lb.name == "My OneWheel");
+    REQUIRE(lb.ble_name == "OW-1234");
+    REQUIRE(lb.hw_name == "Little FOCer V3.1");
+    REQUIRE(lb.fw_major == 6);
+    REQUIRE(lb.fw_minor == 2);
+    REQUIRE(lb.motor_pole_pairs == 15);
+    REQUIRE_THAT(lb.wheel_circumference_m, Catch::Matchers::WithinAbs(0.92, 0.001));
+    REQUIRE(lb.battery_series_cells == 20);
+    REQUIRE_THAT(lb.battery_voltage_min, Catch::Matchers::WithinAbs(60.0, 0.01));
+    REQUIRE_THAT(lb.battery_voltage_max, Catch::Matchers::WithinAbs(84.0, 0.01));
+    REQUIRE_THAT(lb.lifetime_distance_m, Catch::Matchers::WithinAbs(12345.67, 0.01));
+    REQUIRE(lb.ride_count == 42);
+    REQUIRE(lb.wizard_complete);
+    REQUIRE(lb.refloat_version == "1.3.0");
+    REQUIRE(lb.last_connected == 1700000000);
+    REQUIRE(lb.active_profile_id == "profile-uuid-1");
 
     auto& lp = loaded.rider_profiles[0];
-    ASSERT_EQ(lp.id, "profile-uuid-1", "storage: profile id");
-    ASSERT_EQ(lp.name, "Chill", "storage: profile name");
-    ASSERT_EQ(lp.icon, "leaf", "storage: profile icon");
-    ASSERT(!lp.is_built_in, "storage: profile not built-in");
-    ASSERT_NEAR(lp.responsiveness, 3.0, 0.01, "storage: profile responsiveness");
-    ASSERT_NEAR(lp.stability, 7.0, 0.01, "storage: profile stability");
-    ASSERT_NEAR(lp.footpad_sensitivity, 5.0, 0.01, "storage: profile footpad_sens");
-    ASSERT_NEAR(lp.disengage_speed, 3.5, 0.01, "storage: profile disengage_speed");
+    REQUIRE(lp.id == "profile-uuid-1");
+    REQUIRE(lp.name == "Chill");
+    REQUIRE(lp.icon == "leaf");
+    REQUIRE(!lp.is_built_in);
+    REQUIRE_THAT(lp.responsiveness, Catch::Matchers::WithinAbs(3.0, 0.01));
+    REQUIRE_THAT(lp.stability, Catch::Matchers::WithinAbs(7.0, 0.01));
+    REQUIRE_THAT(lp.footpad_sensitivity, Catch::Matchers::WithinAbs(5.0, 0.01));
+    REQUIRE_THAT(lp.disengage_speed, Catch::Matchers::WithinAbs(3.5, 0.01));
 }
 
 // --- Engine FFI round-trip ---
-static void test_engine_ffi() {
+TEST_CASE("Engine FFI saves and reloads boards and profiles", "[engine][ffi]") {
     const char* path = "/tmp/nosedive_test_engine.json";
     std::remove(path); // clean slate
 
     auto* e = nd_engine_create(path);
-    ASSERT(e != nullptr, "engine: create");
+    REQUIRE(e != nullptr);
 
     // Save a board via engine
     nd_board_t cb = {};
@@ -539,7 +537,7 @@ static void test_engine_ffi() {
     cb.battery_voltage_max = 84.0;
     cb.wizard_complete = true;
     nd_engine_save_board(e, cb);
-    ASSERT_EQ(nd_engine_board_count(e), 1u, "engine: 1 board");
+    REQUIRE(nd_engine_board_count(e) == 1u);
 
     // Save a profile via engine
     nd_rider_profile_t cp = {};
@@ -549,39 +547,39 @@ static void test_engine_ffi() {
     cp.responsiveness = 5.0;
     cp.stability = 5.0;
     nd_engine_save_profile(e, cp);
-    ASSERT_EQ(nd_engine_profile_count(e), 1u, "engine: 1 profile");
+    REQUIRE(nd_engine_profile_count(e) == 1u);
 
     nd_engine_set_active_profile_id(e, "ffi-profile-1");
     nd_engine_destroy(e);
 
     // Reload from disk
     auto* e2 = nd_engine_create(path);
-    ASSERT(e2 != nullptr, "engine: reload");
-    ASSERT_EQ(nd_engine_board_count(e2), 1u, "engine: reloaded 1 board");
-    ASSERT_EQ(nd_engine_profile_count(e2), 1u, "engine: reloaded 1 profile");
+    REQUIRE(e2 != nullptr);
+    REQUIRE(nd_engine_board_count(e2) == 1u);
+    REQUIRE(nd_engine_profile_count(e2) == 1u);
 
     nd_board_t lb = nd_engine_get_board(e2, 0);
-    ASSERT_EQ(std::string(lb.id), "ffi-board-1", "engine: board id");
-    ASSERT_EQ(std::string(lb.name), "Test Board", "engine: board name");
-    ASSERT_EQ(lb.fw_major, 6, "engine: board fw_major");
-    ASSERT(lb.wizard_complete, "engine: board wizard_complete");
-    ASSERT_NEAR(lb.wheel_circumference_m, 0.88, 0.001, "engine: board wheel_circ");
+    REQUIRE(std::string(lb.id) == "ffi-board-1");
+    REQUIRE(std::string(lb.name) == "Test Board");
+    REQUIRE(lb.fw_major == 6);
+    REQUIRE(lb.wizard_complete);
+    REQUIRE_THAT(lb.wheel_circumference_m, Catch::Matchers::WithinAbs(0.88, 0.001));
 
     nd_rider_profile_t lp = nd_engine_get_profile(e2, 0);
-    ASSERT_EQ(std::string(lp.id), "ffi-profile-1", "engine: profile id");
-    ASSERT_EQ(std::string(lp.name), "Flow", "engine: profile name");
-    ASSERT_NEAR(lp.responsiveness, 5.0, 0.01, "engine: profile responsiveness");
+    REQUIRE(std::string(lp.id) == "ffi-profile-1");
+    REQUIRE(std::string(lp.name) == "Flow");
+    REQUIRE_THAT(lp.responsiveness, Catch::Matchers::WithinAbs(5.0, 0.01));
 
     auto* aid = nd_engine_active_profile_id(e2);
-    ASSERT(aid != nullptr, "engine: active profile id not null");
-    ASSERT_EQ(std::string(aid), "ffi-profile-1", "engine: active profile id");
+    REQUIRE(aid != nullptr);
+    REQUIRE(std::string(aid) == "ffi-profile-1");
 
     nd_engine_destroy(e2);
     std::remove(path);
 }
 
 // --- Engine receive_bytes + domain callbacks ---
-static void test_engine_payload() {
+TEST_CASE("Engine dispatches board callback on FW version response", "[engine]") {
     const char* path = "/tmp/nosedive_test_engine_payload.json";
     std::remove(path);
 
@@ -605,7 +603,7 @@ static void test_engine_payload() {
 
     // Simulate connection — should write discovery packets
     nd_engine_on_connected(e, 512);
-    ASSERT(!written.empty(), "engine: writes discovery on connect");
+    REQUIRE(!written.empty());
 
     // Build a FW_VERSION response and frame it as a VESC packet
     std::vector<uint8_t> fw_payload;
@@ -618,50 +616,20 @@ static void test_engine_payload() {
     for (int i = 0; i < 12; i++) fw_payload.push_back(0xA0 + i); // UUID
 
     auto framed = vesc::encode_packet(fw_payload.data(), fw_payload.size());
-    ASSERT(!framed.empty(), "engine: framed FW response");
+    REQUIRE(!framed.empty());
 
     // Feed raw bytes — engine decodes internally
     nd_engine_receive_bytes(e, framed.data(), framed.size());
 
-    ASSERT(got_board, "engine: board callback fired");
-    ASSERT_EQ(last_board.fw_major, 6, "engine: fw major");
-    ASSERT_EQ(last_board.fw_minor, 5, "engine: fw minor");
-    ASSERT_EQ(std::string(last_board.hw_name), "TestHW", "engine: hw_name");
-    ASSERT(last_board.show_wizard, "engine: wizard for unknown board");
+    REQUIRE(got_board);
+    REQUIRE(last_board.fw_major == 6);
+    REQUIRE(last_board.fw_minor == 5);
+    REQUIRE(std::string(last_board.hw_name) == "TestHW");
+    REQUIRE(last_board.show_wizard);
 
     // Disconnect
     nd_engine_on_disconnected(e);
 
     nd_engine_destroy(e);
     std::remove(path);
-}
-
-
-int main() {
-    test_crc16();
-    test_packet_roundtrip_short();
-    test_packet_roundtrip_long();
-    test_buffer_int16();
-    test_buffer_int32();
-    test_buffer_float16();
-    test_buffer_float32_auto();
-    test_buffer_string();
-    test_profile_load();
-    test_packet_decoder_single();
-    test_packet_decoder_chunked();
-    test_packet_decoder_multiple();
-    test_refloat_command_builders();
-    test_refloat_compat_decoders();
-    // (transport tests removed — transport is internal to engine)
-    test_parse_fw_version();
-    test_parse_ping_can();
-    test_parse_refloat_info();
-    test_command_builders();
-    test_computed_values();
-    test_storage_roundtrip();
-    test_engine_ffi();
-    test_engine_payload();
-
-    std::printf("\n%d/%d tests passed\n", tests_passed, tests_run);
-    return tests_passed == tests_run ? 0 : 1;
 }
