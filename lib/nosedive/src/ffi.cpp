@@ -259,11 +259,11 @@ static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
         case nosedive::SetupStep::FWBMS:           return ND_SETUP_FW_BMS;
         case nosedive::SetupStep::FWVESC:          return ND_SETUP_FW_VESC;
         case nosedive::SetupStep::InstallRefloat:  return ND_SETUP_INSTALL_REFLOAT;
-        case nosedive::SetupStep::DetectBattery:   return ND_SETUP_DETECT_BATTERY;
         case nosedive::SetupStep::DetectFootpads:  return ND_SETUP_DETECT_FOOTPADS;
         case nosedive::SetupStep::CalibrateIMU:    return ND_SETUP_CALIBRATE_IMU;
         case nosedive::SetupStep::DetectMotor:     return ND_SETUP_DETECT_MOTOR;
         case nosedive::SetupStep::ConfigureWheel:  return ND_SETUP_CONFIGURE_WHEEL;
+        case nosedive::SetupStep::ConfigurePower:  return ND_SETUP_CONFIGURE_POWER;
         case nosedive::SetupStep::Done:            return ND_SETUP_DONE;
         default:                                    return ND_SETUP_IDLE;
     }

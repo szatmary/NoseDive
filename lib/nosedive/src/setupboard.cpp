@@ -302,10 +302,6 @@ void SetupBoard::advance() {
     }
 
     case SetupStep::InstallRefloat:
-        set_state(SetupStep::DetectBattery, StepPhase::Working, "Detecting battery...");
-        break;
-
-    case SetupStep::DetectBattery:
         set_state(SetupStep::DetectFootpads, StepPhase::Working, "Detecting footpad sensors...");
         break;
 
@@ -322,6 +318,10 @@ void SetupBoard::advance() {
         break;
 
     case SetupStep::ConfigureWheel:
+        set_state(SetupStep::ConfigurePower, StepPhase::Working, "Configuring power...");
+        break;
+
+    case SetupStep::ConfigurePower:
         set_state(SetupStep::Done, StepPhase::Working, "Setup complete!");
         return;
 
@@ -331,7 +331,6 @@ void SetupBoard::advance() {
 
     // Send commands for the new working step
     switch (state_.step) {
-    case SetupStep::DetectBattery:
     case SetupStep::DetectFootpads:
         if (send_cb_) send_cb_(vesc::GetValues::Request{}.encode());
         break;
@@ -344,6 +343,9 @@ void SetupBoard::advance() {
         break;
     case SetupStep::ConfigureWheel:
         if (send_cb_) send_cb_({static_cast<uint8_t>(vesc::CommPacketID::GetMCConf)});
+        break;
+    case SetupStep::ConfigurePower:
+        if (send_cb_) send_cb_(vesc::GetValues::Request{}.encode());
         break;
     default:
         break;
@@ -395,17 +397,6 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         break;
 
     // --- Detection steps ---
-    case SetupStep::DetectBattery:
-        if (cmd == vesc::CommPacketID::GetValues) {
-            auto v = vesc::GetValues::Response::decode(data, len);
-            if (!v) { set_error("Could not read battery voltage"); break; }
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "Battery: %.1fV", v->voltage);
-            set_state(SetupStep::DetectBattery, StepPhase::Working, buf);
-            advance();
-        }
-        break;
-
     case SetupStep::DetectFootpads:
         if (cmd == vesc::CommPacketID::GetValues) {
             set_state(SetupStep::DetectFootpads, StepPhase::Working, "Footpad sensors OK");
@@ -443,6 +434,17 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     case SetupStep::ConfigureWheel:
         if (cmd == vesc::CommPacketID::GetMCConf) {
             set_state(SetupStep::ConfigureWheel, StepPhase::Working, "Configuration read");
+            advance();
+        }
+        break;
+
+    case SetupStep::ConfigurePower:
+        if (cmd == vesc::CommPacketID::GetValues) {
+            auto v = vesc::GetValues::Response::decode(data, len);
+            if (!v) { set_error("Could not read battery voltage"); break; }
+            char buf[128];
+            std::snprintf(buf, sizeof(buf), "Battery: %.1fV", v->voltage);
+            set_state(SetupStep::ConfigurePower, StepPhase::Working, buf);
             advance();
         }
         break;

@@ -94,10 +94,10 @@ static void test_setup_wizard() {
     // Skip past Refloat (already installed)
     setup.skip();
 
-    // Should be at DetectBattery now
+    // Should be at DetectFootpads now
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
-              "wizard: at DetectBattery after skip");
+              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
+              "wizard: at DetectFootpads after skip");
     ASSERT(!sent.empty(), "wizard: sent GetValues request");
 
     // Build a fake COMM_GET_VALUES response
@@ -121,15 +121,8 @@ static void test_setup_wizard() {
     vbuf.append_uint8(0);             // fault
     auto values_resp = vbuf.take();
 
-    // Feed GetValues response → should advance past DetectBattery and DetectFootpads
+    // Feed GetValues → advance past DetectFootpads
     sent.clear();
-    setup.handle_response(values_resp.data(), values_resp.size());
-
-    // DetectFootpads also needs a GetValues response
-    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
-              "wizard: at DetectFootpads");
-
     setup.handle_response(values_resp.data(), values_resp.size());
 
     // Now at CalibrateIMU
@@ -187,6 +180,14 @@ static void test_setup_wizard() {
     // Build fake COMM_GET_MCCONF response (just cmd byte is enough for our handler)
     uint8_t mcconf_resp[] = {static_cast<uint8_t>(vesc::CommPacketID::GetMCConf)};
     setup.handle_response(mcconf_resp, 1);
+
+    // Now at ConfigurePower
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
+              "wizard: at ConfigurePower");
+
+    // Feed GetValues for power config
+    setup.handle_response(values_resp.data(), values_resp.size());
 
     // Should be Done
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
@@ -355,20 +356,20 @@ static void test_setup_wizard_error() {
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
               "wizard_err: paused at InstallRefloat");
     setup.skip();
-    // Now at DetectBattery
+    // Now at DetectFootpads
 
     // Feed garbage — should not advance
     uint8_t garbage[] = {0xFF, 0x00};
     setup.handle_response(garbage, 2);
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
-              "wizard_err: still at DetectBattery after garbage");
+              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
+              "wizard_err: still at DetectFootpads after garbage");
 
     // Skip the step
     setup.skip();
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
-              "wizard_err: skip advances");
+              static_cast<uint8_t>(nosedive::SetupStep::CalibrateIMU),
+              "wizard_err: skip advances to CalibrateIMU");
 
     // Abort
     setup.abort();
@@ -645,7 +646,7 @@ static void test_refloat_install() {
 
     ASSERT(setup.refloat_info.has_value(), "refloat_install: refloat_info set after install");
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
               "refloat_install: at DetectBattery after install");
 
     // Verify progress messages were reported
@@ -739,7 +740,7 @@ static void test_refloat_install_chunked() {
     setup.handle_response(running_ack, sizeof(running_ack));
 
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
               "chunked: at DetectBattery after full install");
 }
 
@@ -769,7 +770,7 @@ static void test_refloat_version_check() {
         // skip() continues
         setup.skip();
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-                  static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+                  static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
                   "refloat_ver: skip advances to DetectBattery");
     }
 
@@ -814,7 +815,7 @@ static void test_refloat_version_check() {
 
         setup.skip();
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-                  static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+                  static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
                   "refloat_ver_skip: skip advances to DetectBattery");
     }
 
@@ -854,7 +855,7 @@ static void test_refloat_version_check() {
         simulate_refloat_install(setup);
 
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-                  static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+                  static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
                   "refloat_ver_update: at DetectBattery after install");
     }
 }

@@ -33,11 +33,11 @@ enum class SetupStep : uint8_t {
     FWBMS,              // BMS firmware
     FWVESC,             // VESC motor controller firmware
     InstallRefloat,     // Install/update Refloat package
-    DetectBattery,      // Read battery voltage, detect cell count
     DetectFootpads,     // Check footpad ADC sensors
     CalibrateIMU,       // Calibrate gyroscope and accelerometer
     DetectMotor,        // Run motor detection (R/L/flux linkage)
     ConfigureWheel,     // Set wheel diameter
+    ConfigurePower,     // Set battery cell count and voltage cutoffs
     Done,
 };
 
