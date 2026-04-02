@@ -145,20 +145,25 @@ private:
     std::optional<vesc::FWVersion::Response> express_fw_;
     std::optional<vesc::FWVersion::Response> bms_fw_;
 
-    // The step to return to after WaitReconnect (re-check the updated device)
-    SetupStep post_reconnect_step_ = SetupStep::Idle;
+    // Per-target helpers (consolidate Express/BMS/VESC branching)
+    std::optional<uint8_t> find_can_id(UpdateTarget target) const;
+    const char* label_for(UpdateTarget target) const;
+    UpdateTarget target_for_step(SetupStep step) const;
+    SetupStep check_step_for(UpdateTarget target) const;
+    std::optional<vesc::FWVersion::Response>& fw_for(UpdateTarget target);
+    const std::optional<vesc::FWVersion::Response>& fw_for(UpdateTarget target) const;
+    void latest_for(UpdateTarget target, uint8_t& major, uint8_t& minor) const;
 
-    // Version comparison helpers
-    bool is_vesc_outdated() const;
-    bool is_express_outdated() const;
-    bool is_bms_outdated() const;
-    void check_and_report_fw(SetupStep step, const vesc::FWVersion::Response& fw,
-                              const char* label, uint8_t latest_major, uint8_t latest_minor);
+    // Send a FW version query to the given target
+    void send_fw_query(UpdateTarget target);
+    // Send erase+write commands to the given target
+    void send_fw_update(UpdateTarget target);
 
-    // Find a CAN device ID by convention
-    // Express is typically ID 253, BMS is typically ID 10
-    std::optional<uint8_t> find_express_id() const;
-    std::optional<uint8_t> find_bms_id() const;
+    // Check FW version, report to UI, return true if outdated
+    bool check_and_report_fw(SetupStep step, UpdateTarget target);
+
+    // Common logic: advance from a CheckFW step to the next one or to VESC check
+    void advance_to_next_fw_check();
 };
 
 } // namespace nosedive
