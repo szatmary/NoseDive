@@ -91,6 +91,9 @@ public:
     const uint8_t* data() const { return data_.data(); }
     size_t size() const { return data_.size(); }
     size_t read_pos() const { return read_pos_; }
+
+    // Move the internal buffer out (for building payloads)
+    std::vector<uint8_t> take() { return std::move(data_); }
     size_t remaining() const { return data_.size() - read_pos_; }
     void reset_read() { read_pos_ = 0; }
 
