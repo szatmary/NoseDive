@@ -9,6 +9,7 @@ set(VESC_SOURCES
     src/protocol.cpp
     src/commands.cpp
     src/refloat.cpp
+    src/connection.cpp
 )
 
 add_library(vesc STATIC ${VESC_SOURCES})
