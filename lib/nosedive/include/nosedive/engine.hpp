@@ -69,6 +69,7 @@ public:
     void setup_start();
     void setup_retry();
     void setup_skip();
+    void setup_update();
     void setup_abort();
 
     // --- Board CRUD (delegates to storage) ---

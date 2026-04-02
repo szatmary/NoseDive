@@ -258,6 +258,8 @@ static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
         case nosedive::SetupStep::CheckFWExpress: return ND_SETUP_CHECK_FW_EXPRESS;
         case nosedive::SetupStep::CheckFWBMS: return ND_SETUP_CHECK_FW_BMS;
         case nosedive::SetupStep::CheckFWVESC: return ND_SETUP_CHECK_FW_VESC;
+        case nosedive::SetupStep::UpdateFW:        return ND_SETUP_UPDATE_FW;
+        case nosedive::SetupStep::WaitReconnect:  return ND_SETUP_WAIT_RECONNECT;
         case nosedive::SetupStep::InstallRefloat:  return ND_SETUP_INSTALL_REFLOAT;
         case nosedive::SetupStep::DetectBattery:   return ND_SETUP_DETECT_BATTERY;
         case nosedive::SetupStep::DetectFootpads:  return ND_SETUP_DETECT_FOOTPADS;
@@ -283,6 +285,7 @@ void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx) {
 void nd_engine_setup_start(nd_engine_t* e)  { e->engine.setup_start(); }
 void nd_engine_setup_retry(nd_engine_t* e)  { e->engine.setup_retry(); }
 void nd_engine_setup_skip(nd_engine_t* e)   { e->engine.setup_skip(); }
+void nd_engine_setup_update(nd_engine_t* e) { e->engine.setup_update(); }
 void nd_engine_setup_abort(nd_engine_t* e)  { e->engine.setup_abort(); }
 
 // --- Board fleet ---

@@ -104,6 +104,8 @@ typedef enum {
     ND_SETUP_CHECK_FW_EXPRESS,
     ND_SETUP_CHECK_FW_BMS,
     ND_SETUP_CHECK_FW_VESC,
+    ND_SETUP_UPDATE_FW,
+    ND_SETUP_WAIT_RECONNECT,
     ND_SETUP_INSTALL_REFLOAT,
     ND_SETUP_DETECT_BATTERY,
     ND_SETUP_DETECT_FOOTPADS,
@@ -124,6 +126,7 @@ void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx);
 void nd_engine_setup_start(nd_engine_t* e);
 void nd_engine_setup_retry(nd_engine_t* e);
 void nd_engine_setup_skip(nd_engine_t* e);
+void nd_engine_setup_update(nd_engine_t* e);
 void nd_engine_setup_abort(nd_engine_t* e);
 
 // --- Board fleet (persisted) ---

@@ -55,7 +55,17 @@ void Engine::on_connected(size_t mtu) {
     std::unique_lock lock(mu_);
     mtu_ = mtu;
     decoder_.reset();
-    // Discovery sequence: FW version → CAN scan → Refloat info
+
+    // If setup wizard is waiting for reconnect after FW update, notify it
+    if (setup_.is_running() &&
+        setup_.state().step == SetupStep::WaitReconnect) {
+        setup_.on_reconnected();
+        pending_setup_ = true;
+        flush_pending(lock);
+        return;
+    }
+
+    // Normal discovery sequence: FW version → CAN scan → Refloat info
     queue_send(vesc::FWVersion::Request{}.encode());
     queue_send(vesc::PingCAN::Request{}.encode());
     queue_send(vesc::build_refloat_info_request());
@@ -64,6 +74,11 @@ void Engine::on_connected(size_t mtu) {
 
 void Engine::on_disconnected() {
     std::unique_lock lock(mu_);
+
+    // If setup wizard is waiting for reconnect after FW update, preserve it
+    bool waiting_reconnect = setup_.is_running() &&
+        setup_.state().step == SetupStep::WaitReconnect;
+
     decoder_.reset();
     telemetry_ = {};
     active_board_ = std::nullopt;
@@ -75,8 +90,12 @@ void Engine::on_disconnected() {
     awaiting_fw_from_ = std::nullopt;
     refloat_installing_ = false;
     refloat_installed_ = false;
-    show_wizard_ = false;
     guessed_type_cache_.clear();
+
+    if (!waiting_reconnect) {
+        show_wizard_ = false;
+    }
+
     flush_pending(lock);
 }
 
@@ -346,6 +365,13 @@ void Engine::setup_retry() {
 void Engine::setup_skip() {
     std::unique_lock lock(mu_);
     setup_.skip();
+    pending_setup_ = true;
+    flush_pending(lock);
+}
+
+void Engine::setup_update() {
+    std::unique_lock lock(mu_);
+    setup_.update();
     pending_setup_ = true;
     flush_pending(lock);
 }

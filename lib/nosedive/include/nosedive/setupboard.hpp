@@ -32,6 +32,8 @@ enum class SetupStep : uint8_t {
     CheckFWExpress,     // Check VESC Express (BLE bridge) firmware
     CheckFWBMS,         // Check BMS firmware
     CheckFWVESC,        // Check VESC motor controller firmware
+    UpdateFW,           // Firmware update in progress
+    WaitReconnect,      // Waiting for board to reconnect after update
     InstallRefloat,     // Install Refloat package if missing
     DetectBattery,      // Read battery voltage, detect cell count
     DetectFootpads,     // Check footpad ADC sensors
@@ -39,6 +41,29 @@ enum class SetupStep : uint8_t {
     DetectMotor,        // Run motor detection (R/L/flux linkage)
     ConfigureWheel,     // Set wheel diameter
     Done,
+};
+
+// Which device is being updated
+enum class UpdateTarget : uint8_t {
+    None,
+    Express,
+    BMS,
+    VESC,
+};
+
+// Known latest firmware versions (bundled with app)
+struct LatestFW {
+    static constexpr uint8_t vesc_major = 6;
+    static constexpr uint8_t vesc_minor = 6;
+    static constexpr uint8_t express_major = 6;
+    static constexpr uint8_t express_minor = 6;
+
+    static bool is_outdated(uint8_t major, uint8_t minor,
+                            uint8_t latest_major, uint8_t latest_minor) {
+        if (major < latest_major) return true;
+        if (major > latest_major) return false;
+        return minor < latest_minor;
+    }
 };
 
 struct SetupState {
@@ -67,6 +92,14 @@ public:
 
     /// Skip the current step and advance.
     void skip();
+
+    /// Start firmware update for the current CheckFW step.
+    /// Transitions to UpdateFW → WaitReconnect.
+    void update();
+
+    /// Notify the wizard that the board has reconnected (after firmware update).
+    /// Called by the engine when on_connected fires during WaitReconnect.
+    void on_reconnected();
 
     /// Abort the wizard entirely.
     void abort();
@@ -106,6 +139,21 @@ private:
     // Track which CAN devices we've checked
     bool express_checked_ = false;
     bool bms_checked_ = false;
+
+    // Firmware update state
+    UpdateTarget update_target_ = UpdateTarget::None;
+    std::optional<vesc::FWVersion::Response> express_fw_;
+    std::optional<vesc::FWVersion::Response> bms_fw_;
+
+    // The step to return to after WaitReconnect (re-check the updated device)
+    SetupStep post_reconnect_step_ = SetupStep::Idle;
+
+    // Version comparison helpers
+    bool is_vesc_outdated() const;
+    bool is_express_outdated() const;
+    bool is_bms_outdated() const;
+    void check_and_report_fw(SetupStep step, const vesc::FWVersion::Response& fw,
+                              const char* label, uint8_t latest_major, uint8_t latest_minor);
 
     // Find a CAN device ID by convention
     // Express is typically ID 253, BMS is typically ID 10

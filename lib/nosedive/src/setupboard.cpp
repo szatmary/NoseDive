@@ -11,6 +11,10 @@ void SetupBoard::start() {
     state_ = {};
     express_checked_ = false;
     bms_checked_ = false;
+    update_target_ = UpdateTarget::None;
+    express_fw_ = std::nullopt;
+    bms_fw_ = std::nullopt;
+    post_reconnect_step_ = SetupStep::Idle;
 
     // Start with Express FW check if there's an Express on CAN
     if (find_express_id()) {
@@ -24,14 +28,15 @@ void SetupBoard::start() {
             bms_checked_ = true;
             // Skip to main VESC check
             if (main_fw) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                    main_fw->major, main_fw->minor, main_fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWVESC, buf);
-                advance();
+                check_and_report_fw(SetupStep::CheckFWVESC, *main_fw, "VESC",
+                                     LatestFW::vesc_major, LatestFW::vesc_minor);
+                if (!is_vesc_outdated()) {
+                    advance();
+                }
+                // If outdated, we stay at CheckFWVESC — user must update() or skip()
+                return;
             } else {
                 set_step(SetupStep::CheckFWVESC, "Checking VESC firmware...");
-                send_commands_for_step();
             }
         }
     }
@@ -49,7 +54,55 @@ void SetupBoard::skip() {
     advance();
 }
 
+void SetupBoard::update() {
+    // Determine which device to update based on current step
+    switch (state_.step) {
+    case SetupStep::CheckFWExpress:
+        update_target_ = UpdateTarget::Express;
+        post_reconnect_step_ = SetupStep::CheckFWExpress;
+        break;
+    case SetupStep::CheckFWBMS:
+        update_target_ = UpdateTarget::BMS;
+        post_reconnect_step_ = SetupStep::CheckFWBMS;
+        break;
+    case SetupStep::CheckFWVESC:
+        update_target_ = UpdateTarget::VESC;
+        post_reconnect_step_ = SetupStep::CheckFWVESC;
+        break;
+    default:
+        return; // Can only update from a CheckFW step
+    }
+
+    set_step(SetupStep::UpdateFW, "Uploading firmware...");
+    send_commands_for_step();
+}
+
+void SetupBoard::on_reconnected() {
+    if (state_.step != SetupStep::WaitReconnect) return;
+
+    // Board has reconnected — re-query firmware version to verify update
+    set_step(SetupStep::WaitReconnect, "Reconnected, verifying firmware...");
+    if (update_target_ == UpdateTarget::VESC) {
+        if (send_cb_) send_cb_(vesc::FWVersion::Request{}.encode());
+    } else if (update_target_ == UpdateTarget::Express) {
+        if (auto id = find_express_id()) {
+            if (send_cb_) send_cb_(vesc::ForwardCAN::Request{
+                .target_id = *id,
+                .inner_payload = vesc::FWVersion::Request{}.encode()
+            }.encode());
+        }
+    } else if (update_target_ == UpdateTarget::BMS) {
+        if (auto id = find_bms_id()) {
+            if (send_cb_) send_cb_(vesc::ForwardCAN::Request{
+                .target_id = *id,
+                .inner_payload = vesc::FWVersion::Request{}.encode()
+            }.encode());
+        }
+    }
+}
+
 void SetupBoard::abort() {
+    update_target_ = UpdateTarget::None;
     set_step(SetupStep::Idle, "Setup cancelled");
 }
 
@@ -69,6 +122,45 @@ void SetupBoard::fire_callback() {
     if (state_cb_) state_cb_(state_);
 }
 
+// --- Version comparison helpers ---
+
+bool SetupBoard::is_vesc_outdated() const {
+    if (!main_fw) return false;
+    return LatestFW::is_outdated(main_fw->major, main_fw->minor,
+                                  LatestFW::vesc_major, LatestFW::vesc_minor);
+}
+
+bool SetupBoard::is_express_outdated() const {
+    if (!express_fw_) return false;
+    return LatestFW::is_outdated(express_fw_->major, express_fw_->minor,
+                                  LatestFW::express_major, LatestFW::express_minor);
+}
+
+bool SetupBoard::is_bms_outdated() const {
+    if (!bms_fw_) return false;
+    // BMS uses same version scheme as VESC
+    return LatestFW::is_outdated(bms_fw_->major, bms_fw_->minor,
+                                  LatestFW::vesc_major, LatestFW::vesc_minor);
+}
+
+void SetupBoard::check_and_report_fw(SetupStep step,
+                                      const vesc::FWVersion::Response& fw,
+                                      const char* label,
+                                      uint8_t latest_major, uint8_t latest_minor) {
+    char buf[256];
+    bool outdated = LatestFW::is_outdated(fw.major, fw.minor, latest_major, latest_minor);
+    if (outdated) {
+        std::snprintf(buf, sizeof(buf), "%s FW %d.%02d — update available (%d.%02d)",
+            label, fw.major, fw.minor, latest_major, latest_minor);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%s FW %d.%02d — %s — up to date",
+            label, fw.major, fw.minor, fw.hw_name.c_str());
+    }
+    set_step(step, buf);
+}
+
+// --- State machine ---
+
 void SetupBoard::advance() {
     auto current = state_.step;
 
@@ -80,11 +172,12 @@ void SetupBoard::advance() {
         } else {
             bms_checked_ = true;
             if (main_fw) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                    main_fw->major, main_fw->minor, main_fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWVESC, buf);
-                advance(); // already have FW info, skip to next
+                check_and_report_fw(SetupStep::CheckFWVESC, *main_fw, "VESC",
+                                     LatestFW::vesc_major, LatestFW::vesc_minor);
+                if (!is_vesc_outdated()) {
+                    advance(); // up to date, skip to next
+                }
+                // If outdated, pause — user must update() or skip()
                 return;
             }
             set_step(SetupStep::CheckFWVESC, "Checking VESC firmware...");
@@ -94,11 +187,11 @@ void SetupBoard::advance() {
     case SetupStep::CheckFWBMS:
         bms_checked_ = true;
         if (main_fw) {
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                main_fw->major, main_fw->minor, main_fw->hw_name.c_str());
-            set_step(SetupStep::CheckFWVESC, buf);
-            advance();
+            check_and_report_fw(SetupStep::CheckFWVESC, *main_fw, "VESC",
+                                 LatestFW::vesc_major, LatestFW::vesc_minor);
+            if (!is_vesc_outdated()) {
+                advance();
+            }
             return;
         }
         set_step(SetupStep::CheckFWVESC, "Checking VESC firmware...");
@@ -111,6 +204,34 @@ void SetupBoard::advance() {
             return;
         }
         set_step(SetupStep::InstallRefloat, "Installing Refloat package...");
+        break;
+
+    case SetupStep::UpdateFW:
+        // Firmware upload done — wait for board to reconnect
+        set_step(SetupStep::WaitReconnect, "Board is rebooting, waiting for reconnect...");
+        return; // Don't send commands — we're waiting for external reconnect
+
+    case SetupStep::WaitReconnect:
+        // Reconnect verified — resume from the CheckFW step that triggered update
+        update_target_ = UpdateTarget::None;
+        // Advance past the CheckFW step that was just verified
+        switch (post_reconnect_step_) {
+        case SetupStep::CheckFWExpress:
+            // Re-run advance from CheckFWExpress
+            state_.step = SetupStep::CheckFWExpress;
+            advance();
+            return;
+        case SetupStep::CheckFWBMS:
+            state_.step = SetupStep::CheckFWBMS;
+            advance();
+            return;
+        case SetupStep::CheckFWVESC:
+            state_.step = SetupStep::CheckFWVESC;
+            advance();
+            return;
+        default:
+            break;
+        }
         break;
 
     case SetupStep::InstallRefloat:
@@ -170,6 +291,36 @@ void SetupBoard::send_commands_for_step() {
         send_cb_(vesc::FWVersion::Request{}.encode());
         break;
 
+    case SetupStep::UpdateFW:
+        // Send firmware update commands (simplified — real impl would chunk binary)
+        if (update_target_ == UpdateTarget::VESC) {
+            send_cb_({static_cast<uint8_t>(vesc::CommPacketID::EraseNewApp)});
+            send_cb_({static_cast<uint8_t>(vesc::CommPacketID::WriteNewAppData)});
+        } else if (update_target_ == UpdateTarget::Express) {
+            if (auto id = find_express_id()) {
+                send_cb_(vesc::ForwardCAN::Request{
+                    .target_id = *id,
+                    .inner_payload = {static_cast<uint8_t>(vesc::CommPacketID::EraseNewApp)}
+                }.encode());
+                send_cb_(vesc::ForwardCAN::Request{
+                    .target_id = *id,
+                    .inner_payload = {static_cast<uint8_t>(vesc::CommPacketID::WriteNewAppData)}
+                }.encode());
+            }
+        } else if (update_target_ == UpdateTarget::BMS) {
+            if (auto id = find_bms_id()) {
+                send_cb_(vesc::ForwardCAN::Request{
+                    .target_id = *id,
+                    .inner_payload = {static_cast<uint8_t>(vesc::CommPacketID::EraseNewApp)}
+                }.encode());
+                send_cb_(vesc::ForwardCAN::Request{
+                    .target_id = *id,
+                    .inner_payload = {static_cast<uint8_t>(vesc::CommPacketID::WriteNewAppData)}
+                }.encode());
+            }
+        }
+        break;
+
     case SetupStep::InstallRefloat:
         send_cb_({static_cast<uint8_t>(vesc::CommPacketID::EraseNewApp)});
         send_cb_({static_cast<uint8_t>(vesc::CommPacketID::WriteNewAppData)});
@@ -212,11 +363,13 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     case SetupStep::CheckFWExpress:
         if (cmd == vesc::CommPacketID::FWVersion) {
             if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "Express FW %d.%02d — %s",
-                    fw->major, fw->minor, fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWExpress, buf);
-                advance();
+                express_fw_ = *fw;
+                check_and_report_fw(SetupStep::CheckFWExpress, *fw, "Express",
+                                     LatestFW::express_major, LatestFW::express_minor);
+                if (!is_express_outdated()) {
+                    advance();
+                }
+                // If outdated, pause — user must update() or skip()
             } else {
                 set_error("Could not read Express firmware");
             }
@@ -226,11 +379,12 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     case SetupStep::CheckFWBMS:
         if (cmd == vesc::CommPacketID::FWVersion) {
             if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "BMS FW %d.%02d — %s",
-                    fw->major, fw->minor, fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWBMS, buf);
-                advance();
+                bms_fw_ = *fw;
+                check_and_report_fw(SetupStep::CheckFWBMS, *fw, "BMS",
+                                     LatestFW::vesc_major, LatestFW::vesc_minor);
+                if (!is_bms_outdated()) {
+                    advance();
+                }
             } else {
                 set_error("Could not read BMS firmware");
             }
@@ -241,13 +395,51 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         if (cmd == vesc::CommPacketID::FWVersion) {
             if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
                 main_fw = *fw;
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                    fw->major, fw->minor, fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWVESC, buf);
-                advance();
+                check_and_report_fw(SetupStep::CheckFWVESC, *fw, "VESC",
+                                     LatestFW::vesc_major, LatestFW::vesc_minor);
+                if (!is_vesc_outdated()) {
+                    advance();
+                }
+                // If outdated, pause — user must update() or skip()
             } else {
                 set_error("Could not read VESC firmware");
+            }
+        }
+        break;
+
+    case SetupStep::UpdateFW:
+        // Firmware write acknowledged — transition to WaitReconnect
+        if (cmd == vesc::CommPacketID::WriteNewAppData ||
+            cmd == vesc::CommPacketID::EraseNewApp) {
+            // Wait for the final write ack
+            if (cmd == vesc::CommPacketID::WriteNewAppData) {
+                advance(); // → WaitReconnect
+            }
+        }
+        break;
+
+    case SetupStep::WaitReconnect:
+        // We're waiting for a FW version response after reconnect
+        if (cmd == vesc::CommPacketID::FWVersion) {
+            if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
+                char buf[256];
+                if (update_target_ == UpdateTarget::VESC) {
+                    main_fw = *fw;
+                    std::snprintf(buf, sizeof(buf), "VESC FW updated to %d.%02d",
+                        fw->major, fw->minor);
+                } else if (update_target_ == UpdateTarget::Express) {
+                    express_fw_ = *fw;
+                    std::snprintf(buf, sizeof(buf), "Express FW updated to %d.%02d",
+                        fw->major, fw->minor);
+                } else if (update_target_ == UpdateTarget::BMS) {
+                    bms_fw_ = *fw;
+                    std::snprintf(buf, sizeof(buf), "BMS FW updated to %d.%02d",
+                        fw->major, fw->minor);
+                }
+                set_step(SetupStep::WaitReconnect, buf);
+                advance(); // → resume from post_reconnect_step_
+            } else {
+                set_error("Could not verify firmware after update");
             }
         }
         break;
