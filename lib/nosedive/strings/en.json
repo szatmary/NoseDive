@@ -1,0 +1,105 @@
+{
+  "wizard": {
+    "fw_express": {
+      "title": "Express Firmware",
+      "checking": "Checking Express firmware...",
+      "up_to_date": "Express FW {major}.{minor:02} — {hw_name} — up to date",
+      "update_available": "Express FW {major}.{minor:02} — update available ({latest_major}.{latest_minor:02})",
+      "uploading": "Uploading Express firmware...",
+      "updated": "Express FW updated to {major}.{minor:02}",
+      "error_read": "Could not read Express firmware"
+    },
+    "fw_bms": {
+      "title": "BMS Firmware",
+      "checking": "Checking BMS firmware...",
+      "up_to_date": "BMS FW {major}.{minor:02} — {hw_name} — up to date",
+      "update_available": "BMS FW {major}.{minor:02} — update available ({latest_major}.{latest_minor:02})",
+      "uploading": "Uploading BMS firmware...",
+      "updated": "BMS FW updated to {major}.{minor:02}",
+      "error_read": "Could not read BMS firmware"
+    },
+    "fw_vesc": {
+      "title": "Controller Firmware",
+      "checking": "Checking controller firmware...",
+      "up_to_date": "VESC FW {major}.{minor:02} — {hw_name} — up to date",
+      "update_available": "VESC FW {major}.{minor:02} — update available ({latest_major}.{latest_minor:02})",
+      "uploading": "Uploading controller firmware...",
+      "updated": "VESC FW updated to {major}.{minor:02}",
+      "error_read": "Could not read controller firmware"
+    },
+    "fw_common": {
+      "rebooting": "Board is rebooting, waiting for reconnect...",
+      "reconnected": "Reconnected, verifying firmware...",
+      "error_verify": "Could not verify firmware after update"
+    },
+    "factory_reset": {
+      "title": "Factory Reset",
+      "prompt": "Reset all settings to factory defaults?",
+      "motor_config": "Resetting motor configuration...",
+      "app_config": "Resetting app configuration...",
+      "complete": "Factory reset complete"
+    },
+    "install_refloat": {
+      "title": "Refloat Package",
+      "not_installed": "Refloat not installed — install {major}.{minor}.{patch}?",
+      "update_available": "Refloat {major}.{minor}.{patch} — update available ({latest_major}.{latest_minor}.{latest_patch})",
+      "up_to_date": "Refloat {major}.{minor}.{patch} — up to date",
+      "installing": "Installing Refloat package...",
+      "erasing_lisp": "Erasing Lisp code...",
+      "uploading_lisp": "Uploading Lisp code... {percent}%",
+      "erasing_qml": "Erasing QML UI...",
+      "uploading_qml": "Uploading QML UI... {percent}%",
+      "starting_runtime": "Starting Lisp runtime...",
+      "installed": "Refloat installed",
+      "error_no_package": "No Refloat package loaded"
+    },
+    "detect_footpads": {
+      "title": "Footpad Sensors",
+      "working": "Detecting footpad sensors...",
+      "ok": "Footpad sensors OK"
+    },
+    "calibrate_imu": {
+      "title": "IMU Calibration",
+      "working": "Calibrating IMU...",
+      "ok": "IMU OK — pitch={pitch}° roll={roll}°",
+      "error": "Could not read IMU data"
+    },
+    "detect_motor": {
+      "title": "Motor Detection",
+      "working": "Detecting motor parameters...",
+      "ok": "Motor detected successfully",
+      "error": "Motor detection failed",
+      "error_code": "Motor detection failed (code {code})"
+    },
+    "configure_wheel": {
+      "title": "Wheel Setup",
+      "working": "Configuring wheel...",
+      "read": "Configuration read"
+    },
+    "configure_power": {
+      "title": "Battery Setup",
+      "working": "Detecting battery...",
+      "prompt_bms": "BMS: {cells}S, {voltage}V, SoC {soc}% — set cutoffs {cutoff_start}V / {cutoff_end}V?",
+      "prompt_voltage": "Battery: {voltage}V (~{cells}S) — set cutoffs {cutoff_start}V / {cutoff_end}V?",
+      "prompt_cells": "{cells}S — set cutoffs {cutoff_start}V / {cutoff_end}V?",
+      "set": "Battery cutoffs set: {cutoff_start}V / {cutoff_end}V",
+      "error_bms": "Could not read BMS data",
+      "error_voltage": "Could not read battery voltage"
+    },
+    "done": {
+      "title": "Setup Complete",
+      "complete": "Setup complete!"
+    },
+    "cancelled": "Setup cancelled",
+    "buttons": {
+      "update": "Update",
+      "install": "Install",
+      "skip": "Skip",
+      "continue": "Continue",
+      "retry": "Retry",
+      "reset": "Reset",
+      "confirm": "Confirm",
+      "cancel": "Cancel"
+    }
+  }
+}
