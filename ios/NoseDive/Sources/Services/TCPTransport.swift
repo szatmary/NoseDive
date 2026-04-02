@@ -5,7 +5,7 @@ import Network
 /// Uses Network.framework (NWConnection) for async TCP I/O.
 ///
 /// This is a thin transport — it does not handle VESC packet framing.
-/// Framing is done by the C++ nd_transport_t layer, same as BLE.
+/// Framing is done by the C++ C++ engine layer, same as BLE.
 class TCPTransport {
     enum Event {
         case connected

@@ -1,11 +1,7 @@
 #pragma once
 
-// Umbrella header for C++ consumers
-#include "nosedive/crc.hpp"
-#include "nosedive/protocol.hpp"
-#include "nosedive/commands.hpp"
+// Umbrella header
+#include "vesc/vesc.hpp"
 #include "nosedive/profile.hpp"
-#include "nosedive/refloat.hpp"
-
 #include "nosedive/storage.hpp"
 #include "nosedive/engine.hpp"

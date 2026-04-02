@@ -44,7 +44,7 @@ class BoardManager: ObservableObject {
     // Transport
     private var bleService: BLEService?
     private var tcpTransport: TCPTransport?
-    private var vescTransport: OpaquePointer? // nd_transport_t* for VESC packet framing (BLE and TCP)
+    // (transport removed — engine owns packet codec internally)
     private var activeTransport: TransportKind = .none
 
     enum TransportKind {
@@ -64,26 +64,96 @@ class BoardManager: ObservableObject {
     init() {
         engine = NoseDiveEngine.shared.handle
 
-        // Set up engine callbacks
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
 
-        nd_engine_set_send_callback(engine, { payload, len, ctx in
-            guard let ctx, let payload else { return }
-            let data = Data(bytes: payload, count: len)
+        // Write callback — engine sends raw framed bytes, platform writes to wire
+        nd_engine_set_write_callback(engine, { data, len, ctx in
+            guard let ctx, let data else { return }
+            let chunk = Data(bytes: data, count: len)
             let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
             Task { @MainActor in
-                mgr.sendToTransport(data)
+                switch mgr.activeTransport {
+                case .ble:  mgr.bleService?.send(chunk)
+                case .tcp:  mgr.tcpTransport?.send(chunk)
+                case .none: break
+                }
             }
         }, selfPtr)
 
-        nd_engine_set_state_callback(engine, { ctx in
+        // Telemetry callback
+        nd_engine_set_telemetry_callback(engine, { t, ctx in
             guard let ctx else { return }
             let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
             Task { @MainActor in
-                mgr.refreshFromEngine()
+                mgr.telemetry = BoardTelemetry(
+                    speed: t.speed,
+                    dutyCycle: t.duty_cycle,
+                    batteryVoltage: t.battery_voltage,
+                    batteryPercent: t.battery_percent,
+                    motorCurrent: t.motor_current,
+                    batteryCurrent: t.battery_current,
+                    power: t.power,
+                    mosfetTemp: t.temp_mosfet,
+                    motorTemp: t.temp_motor,
+                    erpm: t.erpm,
+                    tachometer: t.tachometer,
+                    tachometerAbs: t.tachometer_abs,
+                    fault: t.fault
+                )
             }
         }, selfPtr)
 
+        // Board callback — fires when FW_VERSION received
+        nd_engine_set_board_callback(engine, { board, ctx in
+            guard let ctx else { return }
+            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
+            Task { @MainActor in
+                mgr.mainFWInfo = FWVersionInfo(
+                    hwName: cString(board.hw_name),
+                    major: board.fw_major,
+                    minor: board.fw_minor,
+                    uuid: cString(board.uuid),
+                    hwType: board.hw_type,
+                    customConfigCount: board.custom_config_count,
+                    packageName: cString(board.package_name)
+                )
+                mgr.showWizard = board.show_wizard
+                mgr.loadBoardsFromEngine()
+            }
+        }, selfPtr)
+
+        // Refloat callback
+        nd_engine_set_refloat_callback(engine, { info, ctx in
+            guard let ctx else { return }
+            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
+            Task { @MainActor in
+                if info.has_refloat {
+                    mgr.refloatInfo = RefloatInfo(
+                        name: cString(info.name),
+                        major: info.major,
+                        minor: info.minor,
+                        patch: info.patch,
+                        suffix: cString(info.suffix)
+                    )
+                } else {
+                    mgr.refloatInfo = nil
+                }
+                mgr.refloatInstalling = info.installing
+                mgr.refloatInstalled = info.installed
+            }
+        }, selfPtr)
+
+        // CAN callback
+        nd_engine_set_can_callback(engine, { ids, count, ctx in
+            guard let ctx else { return }
+            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
+            let deviceIds: [UInt8] = ids != nil ? Array(UnsafeBufferPointer(start: ids, count: count)) : []
+            Task { @MainActor in
+                mgr.canDevices = deviceIds
+            }
+        }, selfPtr)
+
+        // Error callback
         nd_engine_set_error_callback(engine, { message, ctx in
             guard let message else { return }
             print("NoseDive engine: \(String(cString: message))")
@@ -96,74 +166,6 @@ class BoardManager: ObservableObject {
         }
 
         loadProfilesFromEngine()
-    }
-
-    // MARK: - Engine state refresh
-
-    private func refreshFromEngine() {
-        // Telemetry
-        let ct = nd_engine_get_telemetry(engine)
-        telemetry = NoseDiveBridge.telemetryFromC(ct)
-
-        // Active board
-        if nd_engine_has_active_board(engine) {
-            let cb = nd_engine_get_active_board(engine)
-            activeBoard = NoseDiveBridge.boardFromC(cb)
-        } else {
-            activeBoard = nil
-        }
-
-        // CAN devices
-        let canCount = nd_engine_can_device_count(engine)
-        canDevices = (0..<canCount).map { nd_engine_can_device_id(engine, $0) }
-
-        // Main firmware info
-        if nd_engine_has_active_board(engine) {
-            let fw = nd_engine_get_main_fw(engine)
-            if fw.major > 0 || fw.minor > 0 {
-                mainFWInfo = FWVersionInfo(
-                    hwName: cString(fw.hw_name),
-                    major: fw.major,
-                    minor: fw.minor,
-                    uuid: cString(fw.uuid),
-                    hwType: fw.hw_type,
-                    customConfigCount: fw.custom_config_count,
-                    packageName: cString(fw.package_name)
-                )
-            } else {
-                mainFWInfo = nil
-            }
-        } else {
-            mainFWInfo = nil
-        }
-
-        // Wizard
-        let wizardFlag = nd_engine_should_show_wizard(engine)
-        let isKnown = nd_engine_is_known_board(engine)
-        let hasActive = nd_engine_has_active_board(engine)
-        if wizardFlag || hasActive {
-            NSLog("WIZARD: flag=%d isKnown=%d hasActive=%d connState=%@", wizardFlag ? 1 : 0, isKnown ? 1 : 0, hasActive ? 1 : 0, String(describing: connectionState))
-        }
-        showWizard = wizardFlag
-
-        // Refloat
-        if nd_engine_has_refloat(engine) {
-            let ri = nd_engine_get_refloat_info(engine)
-            refloatInfo = RefloatInfo(
-                name: cString(ri.name),
-                major: ri.major,
-                minor: ri.minor,
-                patch: ri.patch,
-                suffix: cString(ri.suffix)
-            )
-        } else {
-            refloatInfo = nil
-        }
-        refloatInstalling = nd_engine_refloat_installing(engine)
-        refloatInstalled = nd_engine_refloat_installed(engine)
-
-        // Fleet
-        loadBoardsFromEngine()
     }
 
     private func loadBoardsFromEngine() {
@@ -189,15 +191,7 @@ class BoardManager: ObservableObject {
         }
     }
 
-    // MARK: - Transport send
-
-    private func sendToTransport(_ data: Data) {
-        guard let transport = vescTransport else { return }
-        data.withUnsafeBytes { buf in
-            guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            nd_transport_send_payload(transport, ptr, buf.count)
-        }
-    }
+    // MARK: - Raw byte feed (platform → engine)
 
     // MARK: - BLE Scanning
 
@@ -223,7 +217,6 @@ class BoardManager: ObservableObject {
         stopScan()
         connectionState = .connecting(device.name)
         activeTransport = .ble
-        setupVESCTransport(mtu: 20)
         bleService?.connect(to: device.identifier)
     }
 
@@ -233,8 +226,6 @@ class BoardManager: ObservableObject {
         disconnect()
         connectionState = .connecting("\(host):\(port)")
         activeTransport = .tcp
-        // TCP has no MTU limit — use large value so framing sends whole packets
-        setupVESCTransport(mtu: 4096)
 
         let transport = TCPTransport { [weak self] event in
             Task { @MainActor in
@@ -245,52 +236,9 @@ class BoardManager: ObservableObject {
         transport.connect(host: host, port: port)
     }
 
-    // MARK: - VESC Transport (shared by BLE and TCP)
-
-    private func setupVESCTransport(mtu: Int) {
-        teardownVESCTransport()
-        let transport = nd_transport_create(mtu)
-        vescTransport = transport
-
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
-
-        // Transport send callback → write framed chunks to the active link
-        nd_transport_set_send_callback(transport, { data, len, ctx in
-            guard let ctx, let data else { return }
-            let chunk = Data(bytes: data, count: len)
-            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
-            Task { @MainActor in
-                switch mgr.activeTransport {
-                case .ble:  mgr.bleService?.send(chunk)
-                case .tcp:  mgr.tcpTransport?.send(chunk)
-                case .none: break
-                }
-            }
-        }, selfPtr)
-
-        // Transport packet callback → complete VESC payload → engine
-        // Copy payload immediately — the pointer is only valid during this callback
-        nd_transport_set_packet_callback(transport, { payload, len, ctx in
-            guard let ctx, let payload else { return }
-            let copied = Array(UnsafeBufferPointer(start: payload, count: len))
-            let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
-            copied.withUnsafeBufferPointer { buf in
-                nd_engine_handle_payload(mgr.engine, buf.baseAddress, buf.count)
-            }
-        }, selfPtr)
-    }
-
-    private func teardownVESCTransport() {
-        if let transport = vescTransport {
-            nd_transport_destroy(transport)
-            vescTransport = nil
-        }
-    }
-
     // MARK: - Disconnect
 
     func disconnect() {
-        teardownVESCTransport()
         switch activeTransport {
         case .ble:
             bleService?.disconnect()
@@ -303,7 +251,6 @@ class BoardManager: ObservableObject {
         activeTransport = .none
         connectionState = .disconnected
         nd_engine_on_disconnected(engine)
-        refreshFromEngine()
     }
 
     // MARK: - Profiles
@@ -338,22 +285,11 @@ class BoardManager: ObservableObject {
     // MARK: - Refloat install
 
     var hasRefloat: Bool {
-        nd_engine_has_refloat(engine)
+        refloatInfo != nil
     }
 
     func installRefloat() {
         nd_engine_install_refloat(engine)
-    }
-
-    // MARK: - Board identification
-
-    var guessedBoardType: String? {
-        guard let cstr = nd_engine_guessed_board_type(engine) else { return nil }
-        return String(cString: cstr)
-    }
-
-    var isKnownBoard: Bool {
-        nd_engine_is_known_board(engine)
     }
 
     // MARK: - Wizard
@@ -364,7 +300,7 @@ class BoardManager: ObservableObject {
     }
 
     func saveToDisk() {
-        // Engine auto-persists via storage layer — explicit save is a no-op
+        // Engine auto-persists via storage layer
     }
 
     // MARK: - Computed
@@ -374,11 +310,11 @@ class BoardManager: ObservableObject {
     }
 
     var speedKmh: Double {
-        nd_engine_speed_kmh(engine)
+        telemetry.speed * 3.6
     }
 
     var speedMph: Double {
-        nd_engine_speed_mph(engine)
+        telemetry.speed * 2.237
     }
 
     // MARK: - BLE Events
@@ -391,15 +327,13 @@ class BoardManager: ObservableObject {
             }
         case .connected:
             connectionState = .connected
-            nd_engine_on_connected(engine)
+            nd_engine_on_connected(engine, 512) // BLE MTU
         case .disconnected:
-            teardownVESCTransport()
             connectionState = .disconnected
             activeTransport = .none
             nd_engine_on_disconnected(engine)
-            refreshFromEngine()
         case .data(let rawData):
-            feedTransport(rawData)
+            feedEngine(rawData)
         }
     }
 
@@ -409,28 +343,25 @@ class BoardManager: ObservableObject {
         switch event {
         case .connected:
             connectionState = .connected
-            nd_engine_on_connected(engine)
+            nd_engine_on_connected(engine, 4096) // TCP, no MTU limit
 
         case .disconnected:
-            teardownVESCTransport()
             connectionState = .disconnected
             activeTransport = .none
             tcpTransport = nil
             nd_engine_on_disconnected(engine)
-            refreshFromEngine()
 
         case .data(let rawData):
-            feedTransport(rawData)
+            feedEngine(rawData)
         }
     }
 
-    // MARK: - Transport data feed (shared by BLE and TCP)
+    // MARK: - Raw byte feed (platform → engine)
 
-    private func feedTransport(_ rawData: Data) {
-        guard let transport = vescTransport else { return }
+    private func feedEngine(_ rawData: Data) {
         rawData.withUnsafeBytes { buf in
             guard let ptr = buf.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return }
-            nd_transport_receive(transport, ptr, buf.count)
+            nd_engine_receive_bytes(engine, ptr, buf.count)
         }
     }
 }

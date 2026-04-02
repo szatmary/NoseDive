@@ -1,9 +1,9 @@
-#include "nosedive/commands.hpp"
-#include "nosedive/protocol.hpp"
+#include "vesc/commands.hpp"
+#include "vesc/protocol.hpp"
 #include <algorithm>
 #include <cstdio>
 
-namespace nosedive {
+namespace vesc {
 
 const char* fault_code_str(FaultCode f) {
     switch (f) {
@@ -196,4 +196,4 @@ double battery_percent(double voltage, double voltage_min, double voltage_max) {
     return std::clamp(pct, 0.0, 100.0);
 }
 
-} // namespace nosedive
+} // namespace vesc

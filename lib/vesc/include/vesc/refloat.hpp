@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace nosedive {
+namespace vesc {
 namespace refloat {
 
 constexpr uint8_t kPackageMagic = 0x65;
@@ -162,4 +162,4 @@ std::vector<uint8_t> build_get_rt_data();
 std::vector<uint8_t> build_info_request();
 
 } // namespace refloat
-} // namespace nosedive
+} // namespace vesc

@@ -1,7 +1,7 @@
 #include "nosedive/ffi.h"
-#include "nosedive/commands.hpp"
+#include "vesc/commands.hpp"
 #include "nosedive/profile.hpp"
-#include "nosedive/refloat.hpp"
+#include "vesc/refloat.hpp"
 #include "nosedive/engine.hpp"
 #include <cstring>
 #include <algorithm>

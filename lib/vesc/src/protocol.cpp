@@ -1,7 +1,7 @@
-#include "nosedive/protocol.hpp"
-#include "nosedive/crc.hpp"
+#include "vesc/protocol.hpp"
+#include "vesc/crc.hpp"
 
-namespace nosedive {
+namespace vesc {
 
 static constexpr uint8_t kStartByteShort = 0x02;
 static constexpr uint8_t kStartByteLong  = 0x03;
@@ -222,4 +222,4 @@ void PacketDecoder::reset() {
     packets_.clear();
 }
 
-} // namespace nosedive
+} // namespace vesc

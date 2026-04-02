@@ -1,7 +1,7 @@
 #pragma once
 
-#include "nosedive/commands.hpp"
-#include "nosedive/protocol.hpp"
+#include "vesc/commands.hpp"
+#include "vesc/protocol.hpp"
 #include "nosedive/storage.hpp"
 #include <cstdint>
 #include <functional>

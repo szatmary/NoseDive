@@ -1,9 +1,9 @@
-#include "nosedive/refloat.hpp"
-#include "nosedive/protocol.hpp"
+#include "vesc/refloat.hpp"
+#include "vesc/protocol.hpp"
 #include <algorithm>
 #include <cstring>
 
-namespace nosedive {
+namespace vesc {
 namespace refloat {
 
 // --- Compat decoders ---
@@ -227,4 +227,4 @@ std::vector<uint8_t> build_info_request() {
 }
 
 } // namespace refloat
-} // namespace nosedive
+} // namespace vesc

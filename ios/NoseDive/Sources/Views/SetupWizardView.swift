@@ -181,16 +181,7 @@ struct IdentifyStepView: View {
                     .card()
                 }
 
-                // Guessed board type
-                if let guess = boardManager.guessedBoardType {
-                    HStack {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(Theme.primary)
-                        Text("Looks like a **\(guess)**")
-                            .foregroundStyle(Theme.textPrimary)
-                    }
-                    .card()
-                }
+                // (board type guessing moved to engine — TODO: expose via callback)
 
                 // CAN bus devices
                 if !boardManager.canDevices.isEmpty {

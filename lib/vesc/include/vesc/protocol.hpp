@@ -8,7 +8,7 @@
 #include <cstring>
 #include <cmath>
 
-namespace nosedive {
+namespace vesc {
 
 constexpr size_t kMaxPayloadSize = 8192;
 
@@ -102,4 +102,4 @@ private:
     size_t read_pos_ = 0;
 };
 
-} // namespace nosedive
+} // namespace vesc

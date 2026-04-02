@@ -63,7 +63,7 @@ struct FirmwareCheckView: View {
     private var expressSection: some View {
         Group {
             if boardManager.canDevices.contains(253) {
-                // Express FW not available via nd_engine_get_main_fw — show as querying
+                // Express FW not available via board callback — show as querying
                 firmwareCard(
                     title: "VESC Express",
                     icon: "wifi",
@@ -130,7 +130,7 @@ struct FirmwareCheckView: View {
     private var bmsSection: some View {
         Group {
             if boardManager.canDevices.contains(10) {
-                // BMS FW not available via nd_engine_get_main_fw — show as querying
+                // BMS FW not available via board callback — show as querying
                 firmwareCard(
                     title: "BMS",
                     icon: "battery.100.bolt",

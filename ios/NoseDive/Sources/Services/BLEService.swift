@@ -144,7 +144,7 @@ extension BLEService: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
         guard characteristic.uuid == Self.vescRxCharUUID,
               let data = characteristic.value else { return }
-        // Forward raw BLE bytes — packet reassembly handled by C++ nd_transport_t
+        // Forward raw BLE bytes — packet reassembly handled by C++ C++ engine
         eventHandler(.data(data))
     }
 }

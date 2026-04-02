@@ -5,7 +5,7 @@
 #include <string>
 #include <vector>
 
-namespace nosedive {
+namespace vesc {
 
 // VESC command identifiers from datatypes.h
 enum class CommPacketID : uint8_t {
@@ -213,4 +213,4 @@ double speed_from_erpm(double erpm, int pole_pairs, double wheel_circumference_m
 // Compute battery percentage from voltage (linear between min/max).
 double battery_percent(double voltage, double voltage_min, double voltage_max);
 
-} // namespace nosedive
+} // namespace vesc

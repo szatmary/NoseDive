@@ -1,0 +1,5 @@
+/Users/matthewszatmary/Projects/NoseDive/lib/vesc/build/CMakeFiles/vesc.dir
+/Users/matthewszatmary/Projects/NoseDive/lib/vesc/build/CMakeFiles/vesc_tests.dir
+/Users/matthewszatmary/Projects/NoseDive/lib/vesc/build/CMakeFiles/test.dir
+/Users/matthewszatmary/Projects/NoseDive/lib/vesc/build/CMakeFiles/edit_cache.dir
+/Users/matthewszatmary/Projects/NoseDive/lib/vesc/build/CMakeFiles/rebuild_cache.dir
