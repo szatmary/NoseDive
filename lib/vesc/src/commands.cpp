@@ -79,6 +79,14 @@ std::vector<uint8_t> GetBatteryCut::Request::encode() const {
     return {static_cast<uint8_t>(CommPacketID::GetBatteryCut)};
 }
 
+std::vector<uint8_t> SetBatteryCut::Request::encode() const {
+    Buffer buf;
+    buf.append_uint8(static_cast<uint8_t>(CommPacketID::SetBatteryCut));
+    buf.append_float32(voltage_start, 1000);
+    buf.append_float32(voltage_end, 1000);
+    return buf.take();
+}
+
 std::vector<uint8_t> DetectApplyAllFOC::Request::encode() const {
     Buffer buf;
     buf.append_uint8(static_cast<uint8_t>(CommPacketID::DetectApplyAllFOC));

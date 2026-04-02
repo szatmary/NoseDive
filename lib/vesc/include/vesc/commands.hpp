@@ -315,6 +315,19 @@ struct BMSGetValues {
     };
 };
 
+// --- COMM_SET_BATTERY_CUT (0x56) ---
+struct SetBatteryCut {
+    static constexpr CommPacketID id = CommPacketID::SetBatteryCut;
+
+    struct Request {
+        double voltage_start = 0;   // Soft cutoff start voltage
+        double voltage_end = 0;     // Hard cutoff end voltage
+
+        std::vector<uint8_t> encode() const;
+    };
+    // Fire-and-forget, no response
+};
+
 // --- COMM_DETECT_APPLY_ALL_FOC (0x3A) ---
 struct DetectApplyAllFOC {
     static constexpr CommPacketID id = CommPacketID::DetectApplyAllFOC;

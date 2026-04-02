@@ -197,8 +197,18 @@ static void test_setup_wizard() {
               static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
               "wizard: at ConfigurePower");
 
-    // Feed GetValues for power config
+    // Feed GetValues for power config → should pause at Prompt with cutoff info
     setup.handle_response(values_resp.data(), values_resp.size());
+
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
+              "wizard: still at ConfigurePower (Prompt)");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "wizard: ConfigurePower phase is Prompt");
+
+    // Confirm cutoffs
+    setup.update();
 
     // Should be Done
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
@@ -1121,10 +1131,34 @@ static void test_configure_power_with_bms() {
     auto bms_resp = build_bms_response(20, 75.6, 0.0, 0.85);
     setup.handle_response(bms_resp.data(), bms_resp.size());
 
-    // Should show BMS info and advance to Done
+    // Should pause at Prompt with cutoff info
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
+              "power_bms: at ConfigurePower Prompt");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "power_bms: phase is Prompt");
+    ASSERT(setup.state().detail.find("20S") != std::string::npos,
+           "power_bms: detail mentions 20S");
+    ASSERT(setup.state().detail.find("cutoff") != std::string::npos,
+           "power_bms: detail mentions cutoffs");
+
+    // Confirm — should send SetBatteryCut and advance to Done
+    sent.clear();
+    setup.update();
+
+    // Verify SetBatteryCut was sent
+    bool sent_battery_cut = false;
+    for (auto& p : sent) {
+        if (!p.empty() && p[0] == static_cast<uint8_t>(vesc::CommPacketID::SetBatteryCut)) {
+            sent_battery_cut = true;
+        }
+    }
+    ASSERT(sent_battery_cut, "power_bms: sent SetBatteryCut");
+
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::Done),
-              "power_bms: at Done after BMS response");
+              "power_bms: at Done after confirm");
 }
 
 // --- ConfigurePower falls back to GetValues without BMS ---
@@ -1159,6 +1193,69 @@ static void test_configure_power_no_bms() {
     ASSERT(!sent.empty(), "power_no_bms: sent command");
     ASSERT_EQ(sent.back()[0], static_cast<uint8_t>(vesc::CommPacketID::GetValues),
               "power_no_bms: sent GetValues (no BMS)");
+
+    // Feed a GetValues response with ~75.6V (should estimate 20S)
+    vesc::Buffer vbuf;
+    vbuf.append_uint8(static_cast<uint8_t>(vesc::CommPacketID::GetValues));
+    vbuf.append_float16(28.0, 10);    // temp_mosfet
+    vbuf.append_float16(25.0, 10);    // temp_motor
+    vbuf.append_float32(0.0, 100);    // avg_motor_current
+    vbuf.append_float32(0.0, 100);    // avg_input_current
+    vbuf.append_float32(0.0, 100);    // avg_id
+    vbuf.append_float32(0.0, 100);    // avg_iq
+    vbuf.append_float16(0.0, 1000);   // duty_cycle
+    vbuf.append_float32(0.0, 1);      // rpm
+    vbuf.append_float16(75.6, 10);    // voltage (~20S)
+    vbuf.append_float32(0.0, 10000);  // amp_hours
+    vbuf.append_float32(0.0, 10000);  // amp_hours_charged
+    vbuf.append_float32(0.0, 10000);  // watt_hours
+    vbuf.append_float32(0.0, 10000);  // watt_hours_charged
+    vbuf.append_int32(0);             // tachometer
+    vbuf.append_int32(0);             // tachometer_abs
+    vbuf.append_uint8(0);             // fault
+    auto values_resp = vbuf.take();
+
+    setup.handle_response(values_resp.data(), values_resp.size());
+
+    // Should be at Prompt with estimated cell count
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "power_no_bms: phase is Prompt");
+    ASSERT(setup.state().detail.find("20S") != std::string::npos,
+           "power_no_bms: estimated 20S");
+
+    // Skip should advance to Done without sending SetBatteryCut
+    sent.clear();
+    setup.skip();
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::Done),
+              "power_no_bms: skip advances to Done");
+    // Verify no SetBatteryCut was sent
+    bool sent_cut = false;
+    for (auto& p : sent) {
+        if (!p.empty() && p[0] == static_cast<uint8_t>(vesc::CommPacketID::SetBatteryCut))
+            sent_cut = true;
+    }
+    ASSERT(!sent_cut, "power_no_bms: skip did not send SetBatteryCut");
+}
+
+// --- Cell count estimation ---
+static void test_cell_count_estimation() {
+    using SB = nosedive::SetupBoard;
+    // 20S: nominal ~74V (20*3.7)
+    ASSERT_EQ(SB::estimate_cell_count(75.6), 20, "cells: 75.6V → 20S");
+    ASSERT_EQ(SB::estimate_cell_count(74.0), 20, "cells: 74.0V → 20S");
+    // 15S: nominal ~55.5V
+    ASSERT_EQ(SB::estimate_cell_count(55.0), 15, "cells: 55.0V → 15S");
+    ASSERT_EQ(SB::estimate_cell_count(56.0), 15, "cells: 56.0V → 15S");
+    // 16S: nominal ~59.2V
+    ASSERT_EQ(SB::estimate_cell_count(59.0), 16, "cells: 59.0V → 16S");
+    // 18S: nominal ~66.6V
+    ASSERT_EQ(SB::estimate_cell_count(67.0), 18, "cells: 67.0V → 18S");
+    // 24S: nominal ~88.8V
+    ASSERT_EQ(SB::estimate_cell_count(89.0), 24, "cells: 89.0V → 24S");
+    // Edge: 0V
+    ASSERT_EQ(SB::estimate_cell_count(0.0), 0, "cells: 0V → 0S");
 }
 
 // --- BMSGetValues decode ---
@@ -1203,6 +1300,7 @@ int main() {
     test_configure_power_with_bms();
     test_configure_power_no_bms();
     test_bms_get_values_decode();
+    test_cell_count_estimation();
 
     std::printf("\n%d/%d setup tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

@@ -170,6 +170,9 @@ public:
     /// Chunk size for uploading Lisp/QML data.
     static constexpr size_t kUploadChunkSize = 400;
 
+    /// Estimate series cell count from pack voltage.
+    static uint8_t estimate_cell_count(double voltage);
+
 private:
     SetupState state_;
     SetupCallback state_cb_;
@@ -196,6 +199,11 @@ private:
     InstallPhase install_phase_ = InstallPhase::LispErase;
     size_t install_offset_ = 0;
 
+    // Battery config detected during ConfigurePower
+    uint8_t detected_cells_ = 0;
+    double cutoff_start_ = 0;
+    double cutoff_end_ = 0;
+
     // Per-target helpers
     std::optional<uint8_t> find_can_id(UpdateTarget target) const;
     const char* label_for(UpdateTarget target) const;
@@ -216,6 +224,10 @@ private:
     // Factory reset helpers
     void send_reset_command();
     void handle_reset_response(vesc::CommPacketID cmd, const uint8_t* data, size_t len);
+
+    // Battery / power helpers
+    void handle_power_response(vesc::CommPacketID cmd, const uint8_t* data, size_t len);
+    void compute_cutoffs(uint8_t cells);
 
     // Refloat install helpers
     void send_install_command();

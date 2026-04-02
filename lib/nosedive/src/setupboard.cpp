@@ -234,6 +234,22 @@ void SetupBoard::update() {
         return;
     }
 
+    // Battery cutoff — write and advance
+    if (state_.step == SetupStep::ConfigurePower) {
+        if (send_cb_ && detected_cells_ > 0) {
+            send_cb_(vesc::SetBatteryCut::Request{
+                .voltage_start = cutoff_start_,
+                .voltage_end = cutoff_end_
+            }.encode());
+        }
+        char buf[128];
+        std::snprintf(buf, sizeof(buf), "Battery cutoffs set: %.1fV / %.1fV",
+            cutoff_start_, cutoff_end_);
+        set_state(SetupStep::ConfigurePower, StepPhase::Working, buf);
+        advance();
+        return;
+    }
+
     // Refloat install/update
     if (state_.step == SetupStep::InstallRefloat) {
         set_state(SetupStep::InstallRefloat, StepPhase::Working,
@@ -339,7 +355,7 @@ void SetupBoard::advance() {
         break;
 
     case SetupStep::ConfigureWheel:
-        set_state(SetupStep::ConfigurePower, StepPhase::Working, "Configuring power...");
+        set_state(SetupStep::ConfigurePower, StepPhase::Working, "Detecting battery...");
         break;
 
     case SetupStep::ConfigurePower:
@@ -478,27 +494,66 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         break;
 
     case SetupStep::ConfigurePower:
-        if (cmd == vesc::CommPacketID::BMSGetValues) {
-            auto bms = vesc::BMSGetValues::Response::decode(data, len);
-            if (!bms) { set_error("Could not read BMS data"); break; }
-            char buf[256];
-            std::snprintf(buf, sizeof(buf),
-                "BMS: %.1fV, %dS, SoC %.0f%%",
-                bms->voltage, bms->cell_count, bms->soc * 100.0);
-            set_state(SetupStep::ConfigurePower, StepPhase::Working, buf);
-            advance();
-        } else if (cmd == vesc::CommPacketID::GetValues) {
-            auto v = vesc::GetValues::Response::decode(data, len);
-            if (!v) { set_error("Could not read battery voltage"); break; }
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "Battery: %.1fV", v->voltage);
-            set_state(SetupStep::ConfigurePower, StepPhase::Working, buf);
-            advance();
+        if (state_.phase == StepPhase::Working) {
+            handle_power_response(cmd, data, len);
         }
         break;
 
     default:
         break;
+    }
+}
+
+// --- Battery / power helpers ---
+
+uint8_t SetupBoard::estimate_cell_count(double voltage) {
+    // Common Li-ion nominal voltage is ~3.6-3.8V/cell
+    // Estimate using 3.7V nominal, round to nearest common config
+    if (voltage <= 0) return 0;
+    int est = static_cast<int>(voltage / 3.7 + 0.5);
+    // Snap to common series counts: 15S, 16S, 18S, 20S, 21S, 24S
+    static constexpr int common[] = {15, 16, 18, 20, 21, 24};
+    int best = est;
+    int best_diff = 100;
+    for (int c : common) {
+        int diff = std::abs(est - c);
+        if (diff < best_diff) {
+            best_diff = diff;
+            best = c;
+        }
+    }
+    return static_cast<uint8_t>(best);
+}
+
+void SetupBoard::compute_cutoffs(uint8_t cells) {
+    detected_cells_ = cells;
+    // Li-ion per-cell: soft cutoff at 3.2V, hard cutoff at 3.0V
+    cutoff_start_ = cells * 3.2;
+    cutoff_end_   = cells * 3.0;
+}
+
+void SetupBoard::handle_power_response(vesc::CommPacketID cmd,
+                                        const uint8_t* data, size_t len) {
+    char buf[256];
+
+    if (cmd == vesc::CommPacketID::BMSGetValues) {
+        auto bms = vesc::BMSGetValues::Response::decode(data, len);
+        if (!bms) { set_error("Could not read BMS data"); return; }
+        compute_cutoffs(bms->cell_count);
+        std::snprintf(buf, sizeof(buf),
+            "BMS: %dS, %.1fV, SoC %.0f%% — set cutoffs %.1fV / %.1fV?",
+            bms->cell_count, bms->voltage, bms->soc * 100.0,
+            cutoff_start_, cutoff_end_);
+        set_state(SetupStep::ConfigurePower, StepPhase::Prompt, buf);
+    } else if (cmd == vesc::CommPacketID::GetValues) {
+        auto v = vesc::GetValues::Response::decode(data, len);
+        if (!v) { set_error("Could not read battery voltage"); return; }
+        uint8_t cells = estimate_cell_count(v->voltage);
+        compute_cutoffs(cells);
+        std::snprintf(buf, sizeof(buf),
+            "Battery: %.1fV (~%dS) — set cutoffs %.1fV / %.1fV?",
+            v->voltage, cells, cutoff_start_, cutoff_end_);
+        set_state(SetupStep::ConfigurePower, StepPhase::Prompt, buf);
     }
 }
 
