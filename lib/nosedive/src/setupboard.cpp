@@ -190,6 +190,12 @@ void SetupBoard::retry() {
         set_state(state_.step, StepPhase::Working,
             std::string("Checking ") + label_for(target) + " firmware...");
         send_fw_query(target);
+    } else if (state_.step == SetupStep::FactoryReset) {
+        set_state(SetupStep::FactoryReset, StepPhase::Working,
+            "Resetting motor configuration...");
+        reset_phase_ = ResetPhase::GetMCDefault;
+        reset_conf_blob_.clear();
+        send_reset_command();
     } else if (state_.step == SetupStep::InstallRefloat) {
         // Retry install from the beginning
         set_state(SetupStep::InstallRefloat, StepPhase::Working,
@@ -204,10 +210,11 @@ void SetupBoard::retry() {
 void SetupBoard::skip() {
     // Cannot skip fresh Refloat install (no existing version)
     if (state_.step == SetupStep::InstallRefloat && !refloat_info) return;
-    // FW steps and InstallRefloat require Prompt phase to skip
+    // FW steps, FactoryReset, and InstallRefloat require Prompt phase to skip
     if (state_.phase != StepPhase::Prompt) {
         auto target = target_for_step(state_.step);
         if (target != UpdateTarget::None) return; // FW step not at Prompt
+        if (state_.step == SetupStep::FactoryReset) return;
         if (state_.step == SetupStep::InstallRefloat) return;
     }
     state_.error.clear();
@@ -216,6 +223,16 @@ void SetupBoard::skip() {
 
 void SetupBoard::update() {
     if (state_.phase != StepPhase::Prompt) return;
+
+    // Factory reset
+    if (state_.step == SetupStep::FactoryReset) {
+        set_state(SetupStep::FactoryReset, StepPhase::Working,
+            "Resetting motor configuration...");
+        reset_phase_ = ResetPhase::GetMCDefault;
+        reset_conf_blob_.clear();
+        send_reset_command();
+        return;
+    }
 
     // Refloat install/update
     if (state_.step == SetupStep::InstallRefloat) {
@@ -277,7 +294,12 @@ void SetupBoard::advance() {
         advance_to_next_fw_check();
         return;
 
-    case SetupStep::FWVESC: {
+    case SetupStep::FWVESC:
+        set_state(SetupStep::FactoryReset, StepPhase::Prompt,
+            "Reset all settings to factory defaults?");
+        return;
+
+    case SetupStep::FactoryReset: {
         char buf[256];
         if (refloat_info) {
             bool outdated = LatestRefloat::is_outdated(
@@ -388,6 +410,13 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         }
         break;
 
+    // --- Factory reset ---
+    case SetupStep::FactoryReset:
+        if (state_.phase == StepPhase::Working) {
+            handle_reset_response(cmd, data, len);
+        }
+        break;
+
     // --- Refloat install ---
     case SetupStep::InstallRefloat:
         if (state_.phase == StepPhase::Working) {
@@ -449,6 +478,94 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         break;
 
     default:
+        break;
+    }
+}
+
+// --- Factory reset sub-state machine ---
+
+void SetupBoard::send_reset_command() {
+    if (!send_cb_) return;
+
+    switch (reset_phase_) {
+    case ResetPhase::GetMCDefault:
+        set_state(SetupStep::FactoryReset, StepPhase::Working,
+            "Resetting motor configuration...");
+        send_cb_({static_cast<uint8_t>(vesc::CommPacketID::GetMCConfDefault)});
+        break;
+
+    case ResetPhase::SetMC:
+        // Send the default MC config blob back with SetMCConf command
+        {
+            std::vector<uint8_t> pkt;
+            pkt.reserve(1 + reset_conf_blob_.size());
+            pkt.push_back(static_cast<uint8_t>(vesc::CommPacketID::SetMCConf));
+            pkt.insert(pkt.end(), reset_conf_blob_.begin(), reset_conf_blob_.end());
+            send_cb_(pkt);
+        }
+        break;
+
+    case ResetPhase::GetAppDefault:
+        set_state(SetupStep::FactoryReset, StepPhase::Working,
+            "Resetting app configuration...");
+        send_cb_({static_cast<uint8_t>(vesc::CommPacketID::GetAppConfDefault)});
+        break;
+
+    case ResetPhase::SetApp:
+        // Send the default App config blob back with SetAppConf command
+        {
+            std::vector<uint8_t> pkt;
+            pkt.reserve(1 + reset_conf_blob_.size());
+            pkt.push_back(static_cast<uint8_t>(vesc::CommPacketID::SetAppConf));
+            pkt.insert(pkt.end(), reset_conf_blob_.begin(), reset_conf_blob_.end());
+            send_cb_(pkt);
+        }
+        break;
+
+    case ResetPhase::Done:
+        break;
+    }
+}
+
+void SetupBoard::handle_reset_response(vesc::CommPacketID cmd,
+                                        const uint8_t* data, size_t len) {
+    switch (reset_phase_) {
+    case ResetPhase::GetMCDefault:
+        if (cmd == vesc::CommPacketID::GetMCConfDefault) {
+            // Store the config blob (everything after the command byte)
+            reset_conf_blob_.assign(data + 1, data + len);
+            reset_phase_ = ResetPhase::SetMC;
+            send_reset_command();
+        }
+        break;
+
+    case ResetPhase::SetMC:
+        if (cmd == vesc::CommPacketID::SetMCConf) {
+            reset_conf_blob_.clear();
+            reset_phase_ = ResetPhase::GetAppDefault;
+            send_reset_command();
+        }
+        break;
+
+    case ResetPhase::GetAppDefault:
+        if (cmd == vesc::CommPacketID::GetAppConfDefault) {
+            reset_conf_blob_.assign(data + 1, data + len);
+            reset_phase_ = ResetPhase::SetApp;
+            send_reset_command();
+        }
+        break;
+
+    case ResetPhase::SetApp:
+        if (cmd == vesc::CommPacketID::SetAppConf) {
+            reset_phase_ = ResetPhase::Done;
+            reset_conf_blob_.clear();
+            set_state(SetupStep::FactoryReset, StepPhase::Working,
+                "Factory reset complete");
+            advance();
+        }
+        break;
+
+    case ResetPhase::Done:
         break;
     }
 }

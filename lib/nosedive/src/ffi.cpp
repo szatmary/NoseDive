@@ -258,6 +258,7 @@ static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
         case nosedive::SetupStep::FWExpress:       return ND_SETUP_FW_EXPRESS;
         case nosedive::SetupStep::FWBMS:           return ND_SETUP_FW_BMS;
         case nosedive::SetupStep::FWVESC:          return ND_SETUP_FW_VESC;
+        case nosedive::SetupStep::FactoryReset:    return ND_SETUP_FACTORY_RESET;
         case nosedive::SetupStep::InstallRefloat:  return ND_SETUP_INSTALL_REFLOAT;
         case nosedive::SetupStep::DetectFootpads:  return ND_SETUP_DETECT_FOOTPADS;
         case nosedive::SetupStep::CalibrateIMU:    return ND_SETUP_CALIBRATE_IMU;

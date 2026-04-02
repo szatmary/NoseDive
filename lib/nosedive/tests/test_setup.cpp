@@ -84,10 +84,21 @@ static void test_setup_wizard() {
     // Skip the firmware update to continue the wizard
     setup.skip();
 
+    // Should pause at FactoryReset (Prompt)
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "wizard: at FactoryReset after FW skip");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "wizard: FactoryReset phase is Prompt");
+
+    // Skip factory reset
+    setup.skip();
+
     // Should pause at InstallRefloat (up to date, awaiting confirmation)
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
-              "wizard: at InstallRefloat after FW skip");
+              "wizard: at InstallRefloat after FactoryReset skip");
     ASSERT(setup.state().detail.find("up to date") != std::string::npos,
            "wizard: Refloat is up to date");
 
@@ -313,10 +324,21 @@ static void test_setup_wizard_with_can() {
                     nosedive::SetupStep::FWVESC,
                     6, 6, "60_MK6", 0xA0);
 
+    // Should be at FactoryReset + Prompt
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "wizard_can: at FactoryReset after all updates");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "wizard_can: FactoryReset at Prompt");
+
+    // Skip factory reset
+    setup.skip();
+
     // Should be at InstallRefloat + Prompt (no Refloat → "not installed")
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
-              "wizard_can: at InstallRefloat after all updates");
+              "wizard_can: at InstallRefloat after FactoryReset skip");
     ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
               static_cast<uint8_t>(nosedive::StepPhase::Prompt),
               "wizard_can: InstallRefloat at Prompt");
@@ -350,6 +372,11 @@ static void test_setup_wizard_error() {
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "wizard_err: paused at CheckFWVESC (outdated)");
+    setup.skip();
+    // Paused at FactoryReset — skip to continue
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "wizard_err: paused at FactoryReset");
     setup.skip();
     // Paused at InstallRefloat (up to date) — skip to continue
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
@@ -426,11 +453,11 @@ static void test_fw_check_outdated_pauses() {
     ASSERT(setup.state().detail.find("update available") != std::string::npos,
            "outdated: detail mentions update available");
 
-    // Skip should advance past it
+    // Skip should advance to FactoryReset
     setup.skip();
-    ASSERT(static_cast<uint8_t>(setup.state().step) >
-           static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
-           "outdated: skip advances past CheckFWVESC");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "outdated: skip advances to FactoryReset");
 }
 
 // --- Firmware check auto-advances when up to date ---
@@ -449,10 +476,10 @@ static void test_fw_check_uptodate_advances() {
     auto fw_resp = build_fw_response(6, 6, "60_MK6", 0xA0); // UP TO DATE
     setup.handle_response(fw_resp.data(), fw_resp.size());
 
-    // Should advance past CheckFWVESC and pause at InstallRefloat for confirmation
+    // Should advance past CheckFWVESC and pause at FactoryReset
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
-              "uptodate: advances to InstallRefloat");
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "uptodate: advances to FactoryReset");
 }
 
 // --- Firmware update flow: update → WaitReconnect → verify ---
@@ -480,10 +507,10 @@ static void test_fw_update_flow() {
                     nosedive::SetupStep::FWVESC,
                     6, 6, "60_MK6", 0xA0);
 
-    // Should pause at InstallRefloat (up to date, awaiting confirmation)
+    // Should pause at FactoryReset
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
-              "update_flow: at InstallRefloat after VESC update");
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "update_flow: at FactoryReset after VESC update");
 }
 
 // --- Pre-populated outdated FW should also pause ---
@@ -573,6 +600,12 @@ static void test_refloat_install() {
     setup.refloat_package = &pkg;
 
     setup.start();
+
+    // Should pause at FactoryReset first
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "refloat_install: at FactoryReset first");
+    setup.skip();
 
     // Should pause at InstallRefloat with "not installed" prompt
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
@@ -685,6 +718,12 @@ static void test_refloat_install_chunked() {
 
     setup.start();
 
+    // Skip FactoryReset
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "chunked: at FactoryReset first");
+    setup.skip();
+
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
               "chunked: at InstallRefloat");
@@ -760,6 +799,9 @@ static void test_refloat_version_check() {
 
         setup.start();
 
+        // Skip FactoryReset
+        setup.skip();
+
         // Should pause at InstallRefloat
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
@@ -771,7 +813,7 @@ static void test_refloat_version_check() {
         setup.skip();
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
-                  "refloat_ver: skip advances to DetectBattery");
+                  "refloat_ver: skip advances to DetectFootpads");
     }
 
     // Test 2: Outdated Refloat pauses
@@ -787,6 +829,7 @@ static void test_refloat_version_check() {
         setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 1, 0, ""}; // outdated
 
         setup.start();
+        setup.skip(); // Skip FactoryReset
 
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
@@ -808,6 +851,7 @@ static void test_refloat_version_check() {
         setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 0, 0, ""}; // outdated
 
         setup.start();
+        setup.skip(); // Skip FactoryReset
 
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
@@ -816,7 +860,7 @@ static void test_refloat_version_check() {
         setup.skip();
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
-                  "refloat_ver_skip: skip advances to DetectBattery");
+                  "refloat_ver_skip: skip advances to DetectFootpads");
     }
 
     // Test 4: Outdated Refloat — update() triggers install
@@ -837,6 +881,7 @@ static void test_refloat_version_check() {
         setup.refloat_package = &pkg;
 
         setup.start();
+        setup.skip(); // Skip FactoryReset
 
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
@@ -856,7 +901,7 @@ static void test_refloat_version_check() {
 
         ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
                   static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
-                  "refloat_ver_update: at DetectBattery after install");
+                  "refloat_ver_update: at DetectFootpads after install");
     }
 }
 
@@ -873,6 +918,129 @@ static void test_refloat_version_comparison() {
     ASSERT(!LR::is_outdated(2, 0, 0), "refloat_cmp: 2.0.0 > 1.2.1");
 }
 
+// --- Factory reset flow ---
+static void test_factory_reset() {
+    nosedive::SetupBoard setup;
+
+    std::vector<std::vector<uint8_t>> sent;
+    std::vector<std::string> details_seen;
+    setup.set_state_callback([&](const nosedive::SetupState& s) {
+        details_seen.push_back(s.detail);
+    });
+    setup.set_send_callback([&](const std::vector<uint8_t>& payload) {
+        sent.push_back(payload);
+    });
+
+    vesc::FWVersion::Response fw;
+    fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+    setup.can_device_ids = {};
+    setup.main_fw = fw;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
+
+    setup.start();
+
+    // Should pause at FactoryReset with Prompt
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "factory_reset: at FactoryReset");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "factory_reset: phase is Prompt");
+
+    // Cannot skip from non-Prompt phase (already at Prompt, so skip should work)
+    // Test that skip works
+    {
+        nosedive::SetupBoard setup2;
+        setup2.set_state_callback([&](const nosedive::SetupState&) {});
+        setup2.set_send_callback([&](const std::vector<uint8_t>&) {});
+        vesc::FWVersion::Response fw2;
+        fw2.major = 6; fw2.minor = 6; fw2.hw_name = "60_MK6";
+        setup2.can_device_ids = {};
+        setup2.main_fw = fw2;
+        setup2.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
+        setup2.start();
+        setup2.skip();
+        ASSERT_EQ(static_cast<uint8_t>(setup2.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+                  "factory_reset: skip advances to InstallRefloat");
+    }
+
+    // User confirms reset
+    sent.clear();
+    setup.update();
+
+    // Should be Working, and sent GetMCConfDefault
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Working),
+              "factory_reset: phase is Working after update()");
+    ASSERT(!sent.empty(), "factory_reset: sent command after update()");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::GetMCConfDefault),
+              "factory_reset: sent GetMCConfDefault");
+
+    // Simulate GetMCConfDefault response (cmd + fake config blob)
+    std::vector<uint8_t> mc_default;
+    mc_default.push_back(static_cast<uint8_t>(vesc::CommPacketID::GetMCConfDefault));
+    for (int i = 0; i < 100; i++) mc_default.push_back(static_cast<uint8_t>(i)); // fake blob
+    sent.clear();
+    setup.handle_response(mc_default.data(), mc_default.size());
+
+    // Should have sent SetMCConf with the blob
+    ASSERT(!sent.empty(), "factory_reset: sent SetMCConf");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::SetMCConf),
+              "factory_reset: sent SetMCConf");
+    // Verify the blob content (should match what we sent minus cmd byte)
+    ASSERT(sent.back().size() == 101, "factory_reset: SetMCConf has cmd + 100 byte blob");
+
+    // Simulate SetMCConf ack
+    uint8_t mc_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::SetMCConf)};
+    sent.clear();
+    setup.handle_response(mc_ack, sizeof(mc_ack));
+
+    // Should have sent GetAppConfDefault
+    ASSERT(!sent.empty(), "factory_reset: sent GetAppConfDefault");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::GetAppConfDefault),
+              "factory_reset: sent GetAppConfDefault");
+
+    // Simulate GetAppConfDefault response
+    std::vector<uint8_t> app_default;
+    app_default.push_back(static_cast<uint8_t>(vesc::CommPacketID::GetAppConfDefault));
+    for (int i = 0; i < 80; i++) app_default.push_back(static_cast<uint8_t>(i + 50));
+    sent.clear();
+    setup.handle_response(app_default.data(), app_default.size());
+
+    // Should have sent SetAppConf with the blob
+    ASSERT(!sent.empty(), "factory_reset: sent SetAppConf");
+    ASSERT_EQ(sent.back()[0],
+              static_cast<uint8_t>(vesc::CommPacketID::SetAppConf),
+              "factory_reset: sent SetAppConf");
+    ASSERT(sent.back().size() == 81, "factory_reset: SetAppConf has cmd + 80 byte blob");
+
+    // Simulate SetAppConf ack
+    uint8_t app_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::SetAppConf)};
+    setup.handle_response(app_ack, sizeof(app_ack));
+
+    // Should have advanced to InstallRefloat
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "factory_reset: at InstallRefloat after reset complete");
+
+    // Verify progress messages
+    bool saw_motor_reset = false;
+    bool saw_app_reset = false;
+    bool saw_complete = false;
+    for (auto& d : details_seen) {
+        if (d.find("motor configuration") != std::string::npos) saw_motor_reset = true;
+        if (d.find("app configuration") != std::string::npos) saw_app_reset = true;
+        if (d.find("Factory reset complete") != std::string::npos) saw_complete = true;
+    }
+    ASSERT(saw_motor_reset, "factory_reset: saw motor reset progress");
+    ASSERT(saw_app_reset, "factory_reset: saw app reset progress");
+    ASSERT(saw_complete, "factory_reset: saw completion message");
+}
+
 int main() {
     test_setup_wizard();
     test_setup_wizard_with_can();
@@ -887,6 +1055,7 @@ int main() {
     test_refloat_install_chunked();
     test_refloat_version_check();
     test_refloat_version_comparison();
+    test_factory_reset();
 
     std::printf("\n%d/%d setup tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

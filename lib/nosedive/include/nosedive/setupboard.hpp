@@ -32,6 +32,7 @@ enum class SetupStep : uint8_t {
     FWExpress,          // VESC Express (BLE bridge) firmware
     FWBMS,              // BMS firmware
     FWVESC,             // VESC motor controller firmware
+    FactoryReset,       // Reset MC and App config to defaults
     InstallRefloat,     // Install/update Refloat package
     DetectFootpads,     // Check footpad ADC sensors
     CalibrateIMU,       // Calibrate gyroscope and accelerometer
@@ -96,6 +97,15 @@ using SetupCallback = std::function<void(const SetupState&)>;
 
 /// Callback: wizard wants to send a VESC payload.
 using SetupSendCallback = std::function<void(const std::vector<uint8_t>& payload)>;
+
+// Factory reset sub-phases (within FactoryReset step)
+enum class ResetPhase : uint8_t {
+    GetMCDefault,   // Waiting for GetMCConfDefault response
+    SetMC,          // Waiting for SetMCConf ack
+    GetAppDefault,  // Waiting for GetAppConfDefault response
+    SetApp,         // Waiting for SetAppConf ack
+    Done,
+};
 
 // Refloat install sub-phases (within InstallRefloat step)
 enum class InstallPhase : uint8_t {
@@ -178,6 +188,10 @@ private:
     std::optional<vesc::FWVersion::Response> express_fw_;
     std::optional<vesc::FWVersion::Response> bms_fw_;
 
+    // Factory reset sub-state
+    ResetPhase reset_phase_ = ResetPhase::GetMCDefault;
+    std::vector<uint8_t> reset_conf_blob_;
+
     // Refloat install sub-state
     InstallPhase install_phase_ = InstallPhase::LispErase;
     size_t install_offset_ = 0;
@@ -198,6 +212,10 @@ private:
     void handle_fw_response(const uint8_t* data, size_t len);
     void handle_fw_update_response(vesc::CommPacketID cmd);
     void advance_to_next_fw_check();
+
+    // Factory reset helpers
+    void send_reset_command();
+    void handle_reset_response(vesc::CommPacketID cmd, const uint8_t* data, size_t len);
 
     // Refloat install helpers
     void send_install_command();
