@@ -123,6 +123,7 @@ typedef enum {
 typedef struct {
     nd_setup_step_t step;
     nd_step_phase_t phase;
+    char title[64];
     char error[128];
     char detail[256];
 } nd_setup_state_t;

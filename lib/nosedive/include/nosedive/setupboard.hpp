@@ -88,6 +88,7 @@ struct LatestRefloat {
 struct SetupState {
     SetupStep step = SetupStep::Idle;
     StepPhase phase = StepPhase::Working;
+    std::string title;    // step heading (e.g. "Controller Firmware")
     std::string error;    // empty = no error
     std::string detail;   // what's happening / what was detected
 };
@@ -184,6 +185,7 @@ private:
 
     void set_state(SetupStep step, StepPhase phase, const std::string& detail = "");
     void set_error(const std::string& error);
+    static const char* title_for(SetupStep step);
     void advance();
     void fire_callback();
 

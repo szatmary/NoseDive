@@ -285,6 +285,7 @@ void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx) {
         nd_setup_state_t cws = {};
         cws.step = setup_step_to_c(ws.step);
         cws.phase = step_phase_to_c(ws.phase);
+        copy_str(cws.title, sizeof(cws.title), ws.title);
         copy_str(cws.error, sizeof(cws.error), ws.error);
         copy_str(cws.detail, sizeof(cws.detail), ws.detail);
         cb(cws, ctx);

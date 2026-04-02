@@ -296,9 +296,27 @@ void SetupBoard::abort() {
 
 // --- Internal helpers ---
 
+const char* SetupBoard::title_for(SetupStep step) {
+    switch (step) {
+    case SetupStep::FWExpress:      return "Express Firmware";
+    case SetupStep::FWBMS:          return "BMS Firmware";
+    case SetupStep::FWVESC:         return "Controller Firmware";
+    case SetupStep::FactoryReset:   return "Factory Reset";
+    case SetupStep::InstallRefloat: return "Refloat Package";
+    case SetupStep::DetectFootpads: return "Footpad Sensors";
+    case SetupStep::CalibrateIMU:   return "IMU Calibration";
+    case SetupStep::DetectMotor:    return "Motor Detection";
+    case SetupStep::ConfigureWheel: return "Wheel Setup";
+    case SetupStep::ConfigurePower: return "Battery Setup";
+    case SetupStep::Done:           return "Setup Complete";
+    default:                        return "";
+    }
+}
+
 void SetupBoard::set_state(SetupStep step, StepPhase phase, const std::string& detail) {
     state_.step = step;
     state_.phase = phase;
+    state_.title = title_for(step);
     state_.detail = detail;
     state_.error.clear();
     fire_callback();
