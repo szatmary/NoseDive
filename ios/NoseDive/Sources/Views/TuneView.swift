@@ -19,7 +19,7 @@ struct TuneView: View {
             .background(Theme.background)
             .navigationTitle("Tune")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button {
                         showingPresets = true
                     } label: {
@@ -194,7 +194,7 @@ struct TuneView: View {
             }
             .navigationTitle("Presets")
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { showingPresets = false }
                 }
             }

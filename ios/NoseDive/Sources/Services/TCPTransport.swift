@@ -66,7 +66,9 @@ class TCPTransport {
         guard let conn = connection else { return }
         conn.receive(minimumIncompleteLength: 1, maximumLength: 4096) { [weak self] content, _, isComplete, error in
             if let data = content {
-                self?.eventHandler(.data(data))
+                // Copy data — NWConnection may reuse the buffer before MainActor processes it
+                let copy = Data(data)
+                self?.eventHandler(.data(copy))
             }
             if isComplete || error != nil {
                 self?.eventHandler(.disconnected(error))

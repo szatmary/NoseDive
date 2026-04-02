@@ -1,10 +1,7 @@
 #include "nosedive/ffi.h"
-#include "nosedive/crc.hpp"
-#include "nosedive/protocol.hpp"
 #include "nosedive/commands.hpp"
 #include "nosedive/profile.hpp"
 #include "nosedive/refloat.hpp"
-#include "nosedive/ble_transport.hpp"
 #include "nosedive/engine.hpp"
 #include <cstring>
 #include <algorithm>
@@ -104,11 +101,23 @@ static nosedive::RiderProfile profile_from_c(const nd_rider_profile_t* p) {
 
 struct nd_engine {
     nosedive::Engine engine;
-    nd_engine_send_cb send_cb = nullptr;
-    void* send_ctx = nullptr;
-    nd_engine_state_cb state_cb = nullptr;
-    void* state_ctx = nullptr;
-    nd_engine_error_cb error_cb = nullptr;
+
+    nd_write_cb write_cb = nullptr;
+    void* write_ctx = nullptr;
+
+    nd_telemetry_cb telemetry_cb = nullptr;
+    void* telemetry_ctx = nullptr;
+
+    nd_board_cb board_cb = nullptr;
+    void* board_ctx = nullptr;
+
+    nd_refloat_cb refloat_cb = nullptr;
+    void* refloat_ctx = nullptr;
+
+    nd_can_cb can_cb = nullptr;
+    void* can_ctx = nullptr;
+
+    nd_error_cb error_cb = nullptr;
     void* error_ctx = nullptr;
 
     explicit nd_engine(const char* path) : engine(path) {}
@@ -126,163 +135,119 @@ void nd_engine_destroy(nd_engine_t* e) {
     std::unique_ptr<nd_engine> p(e);
 }
 
-void nd_engine_set_send_callback(nd_engine_t* e, nd_engine_send_cb cb, void* ctx) {
-    e->send_cb = cb;
-    e->send_ctx = ctx;
-    e->engine.set_send_callback([e](const uint8_t* data, size_t len) {
-        if (e->send_cb) e->send_cb(data, len, e->send_ctx);
-    });
+// --- Platform → Engine ---
+
+void nd_engine_receive_bytes(nd_engine_t* e, const uint8_t* data, size_t len) {
+    e->engine.receive_bytes(data, len);
 }
 
-void nd_engine_set_state_callback(nd_engine_t* e, nd_engine_state_cb cb, void* ctx) {
-    e->state_cb = cb;
-    e->state_ctx = ctx;
-    e->engine.set_state_callback([e]() {
-        if (e->state_cb) e->state_cb(e->state_ctx);
-    });
-}
-
-void nd_engine_set_error_callback(nd_engine_t* e, nd_engine_error_cb cb, void* ctx) {
-    e->error_cb = cb;
-    e->error_ctx = ctx;
-    e->engine.set_error_callback([e](const char* msg) {
-        if (e->error_cb) e->error_cb(msg, e->error_ctx);
-    });
-}
-
-void nd_engine_on_connected(nd_engine_t* e) {
-    e->engine.on_connected();
+void nd_engine_on_connected(nd_engine_t* e, size_t mtu) {
+    e->engine.on_connected(mtu);
 }
 
 void nd_engine_on_disconnected(nd_engine_t* e) {
     e->engine.on_disconnected();
 }
 
-void nd_engine_handle_payload(nd_engine_t* e, const uint8_t* data, size_t len) {
-    e->engine.handle_payload(data, len);
-}
-
-// --- Telemetry ---
-
-nd_telemetry_t nd_engine_get_telemetry(const nd_engine_t* e) {
-    auto t = e->engine.telemetry();
-    nd_telemetry_t out{};
-    out.temp_mosfet     = t.temp_mosfet;
-    out.temp_motor      = t.temp_motor;
-    out.motor_current   = t.motor_current;
-    out.battery_current = t.battery_current;
-    out.duty_cycle      = t.duty_cycle;
-    out.erpm            = t.erpm;
-    out.battery_voltage = t.battery_voltage;
-    out.battery_percent = t.battery_percent;
-    out.speed           = t.speed;
-    out.power           = t.power;
-    out.tachometer      = t.tachometer;
-    out.tachometer_abs  = t.tachometer_abs;
-    out.fault           = static_cast<uint8_t>(t.fault);
-    return out;
-}
-
-double nd_engine_speed_kmh(const nd_engine_t* e) {
-    return e->engine.speed_kmh();
-}
-
-double nd_engine_speed_mph(const nd_engine_t* e) {
-    return e->engine.speed_mph();
-}
-
-// --- Active board ---
-
-bool nd_engine_has_active_board(const nd_engine_t* e) {
-    return e->engine.active_board().has_value();
-}
-
-nd_board_t nd_engine_get_active_board(const nd_engine_t* e) {
-    nd_board_t out{};
-    auto b = e->engine.active_board();
-    if (b) board_to_c(*b, &out);
-    return out;
-}
-
-bool nd_engine_is_known_board(const nd_engine_t* e) {
-    return e->engine.is_known_board();
-}
-
-const char* nd_engine_guessed_board_type(const nd_engine_t* e) {
-    const char* p = e->engine.guessed_board_type();
-    if (!p) return nullptr;
-    static thread_local std::string result;
-    result = p;
-    return result.c_str();
-}
-
-// --- CAN devices ---
-
-size_t nd_engine_can_device_count(const nd_engine_t* e) {
-    return e->engine.can_device_ids().size();
-}
-
-uint8_t nd_engine_can_device_id(const nd_engine_t* e, size_t index) {
-    auto ids = e->engine.can_device_ids();
-    return index < ids.size() ? ids[index] : 0;
-}
-
-// --- Firmware info ---
-
-nd_fw_version_t nd_engine_get_main_fw(const nd_engine_t* e) {
-    nd_fw_version_t out{};
-    auto fw = e->engine.main_fw();
-    if (fw) {
-        out.major = fw->major;
-        out.minor = fw->minor;
-        copy_str(out.hw_name, sizeof(out.hw_name), fw->hw_name);
-        copy_str(out.uuid, sizeof(out.uuid), fw->uuid);
-        out.hw_type = static_cast<uint8_t>(fw->hw_type);
-        out.custom_config_count = fw->custom_config_count;
-        copy_str(out.package_name, sizeof(out.package_name), fw->package_name);
-    }
-    return out;
-}
-
-// --- Refloat ---
-
-bool nd_engine_has_refloat(const nd_engine_t* e) {
-    return e->engine.has_refloat();
-}
-
-nd_refloat_info_t nd_engine_get_refloat_info(const nd_engine_t* e) {
-    nd_refloat_info_t out{};
-    auto info = e->engine.refloat_info();
-    if (info) {
-        copy_str(out.name, sizeof(out.name), info->name);
-        out.major = info->major;
-        out.minor = info->minor;
-        out.patch = info->patch;
-        copy_str(out.suffix, sizeof(out.suffix), info->suffix);
-    }
-    return out;
-}
-
-bool nd_engine_refloat_installing(const nd_engine_t* e) {
-    return e->engine.refloat_installing();
-}
-
-bool nd_engine_refloat_installed(const nd_engine_t* e) {
-    return e->engine.refloat_installed();
-}
+// --- Actions ---
 
 void nd_engine_install_refloat(nd_engine_t* e) {
     e->engine.install_refloat();
 }
 
-// --- Wizard ---
-
-bool nd_engine_should_show_wizard(const nd_engine_t* e) {
-    return e->engine.should_show_wizard();
-}
-
 void nd_engine_dismiss_wizard(nd_engine_t* e) {
     e->engine.dismiss_wizard();
+}
+
+// --- Callbacks ---
+
+void nd_engine_set_write_callback(nd_engine_t* e, nd_write_cb cb, void* ctx) {
+    e->write_cb = cb;
+    e->write_ctx = ctx;
+    e->engine.set_write_callback([e](const uint8_t* data, size_t len) {
+        if (e->write_cb) e->write_cb(data, len, e->write_ctx);
+    });
+}
+
+void nd_engine_set_telemetry_callback(nd_engine_t* e, nd_telemetry_cb cb, void* ctx) {
+    e->telemetry_cb = cb;
+    e->telemetry_ctx = ctx;
+    e->engine.set_telemetry_callback([e](const nosedive::Telemetry& t) {
+        if (!e->telemetry_cb) return;
+        nd_telemetry_t ct{};
+        ct.temp_mosfet     = t.temp_mosfet;
+        ct.temp_motor      = t.temp_motor;
+        ct.motor_current   = t.motor_current;
+        ct.battery_current = t.battery_current;
+        ct.duty_cycle      = t.duty_cycle;
+        ct.erpm            = t.erpm;
+        ct.battery_voltage = t.battery_voltage;
+        ct.battery_percent = t.battery_percent;
+        ct.speed           = t.speed;
+        ct.power           = t.power;
+        ct.tachometer      = t.tachometer;
+        ct.tachometer_abs  = t.tachometer_abs;
+        ct.fault           = static_cast<uint8_t>(t.fault);
+        e->telemetry_cb(ct, e->telemetry_ctx);
+    });
+}
+
+void nd_engine_set_board_callback(nd_engine_t* e, nd_board_cb cb, void* ctx) {
+    e->board_cb = cb;
+    e->board_ctx = ctx;
+    e->engine.set_board_callback([e](const nosedive::Board& board, const nosedive::FWVersion& fw, bool show_wizard, bool is_known) {
+        if (!e->board_cb) return;
+        nd_board_event_t evt{};
+        copy_str(evt.id, sizeof(evt.id), board.id);
+        copy_str(evt.name, sizeof(evt.name), board.name);
+        copy_str(evt.hw_name, sizeof(evt.hw_name), fw.hw_name);
+        evt.fw_major = fw.major;
+        evt.fw_minor = fw.minor;
+        copy_str(evt.uuid, sizeof(evt.uuid), fw.uuid);
+        evt.hw_type = static_cast<uint8_t>(fw.hw_type);
+        evt.custom_config_count = fw.custom_config_count;
+        copy_str(evt.package_name, sizeof(evt.package_name), fw.package_name);
+        evt.show_wizard = show_wizard;
+        evt.is_known = is_known;
+        e->board_cb(evt, e->board_ctx);
+    });
+}
+
+void nd_engine_set_refloat_callback(nd_engine_t* e, nd_refloat_cb cb, void* ctx) {
+    e->refloat_cb = cb;
+    e->refloat_ctx = ctx;
+    e->engine.set_refloat_callback([e](bool has_refloat, const std::optional<nosedive::RefloatInfo>& info, bool installing, bool installed) {
+        if (!e->refloat_cb) return;
+        nd_refloat_event_t evt{};
+        evt.has_refloat = has_refloat;
+        if (info) {
+            copy_str(evt.name, sizeof(evt.name), info->name);
+            evt.major = info->major;
+            evt.minor = info->minor;
+            evt.patch = info->patch;
+            copy_str(evt.suffix, sizeof(evt.suffix), info->suffix);
+        }
+        evt.installing = installing;
+        evt.installed = installed;
+        e->refloat_cb(evt, e->refloat_ctx);
+    });
+}
+
+void nd_engine_set_can_callback(nd_engine_t* e, nd_can_cb cb, void* ctx) {
+    e->can_cb = cb;
+    e->can_ctx = ctx;
+    e->engine.set_can_callback([e](const std::vector<uint8_t>& ids) {
+        if (!e->can_cb) return;
+        e->can_cb(ids.data(), ids.size(), e->can_ctx);
+    });
+}
+
+void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx) {
+    e->error_cb = cb;
+    e->error_ctx = ctx;
+    e->engine.set_error_callback([e](const char* msg) {
+        if (e->error_cb) e->error_cb(msg, e->error_ctx);
+    });
 }
 
 // --- Board fleet ---
@@ -336,43 +301,5 @@ const char* nd_engine_active_profile_id(const nd_engine_t* e) {
 void nd_engine_set_active_profile_id(nd_engine_t* e, const char* profile_id) {
     e->engine.set_active_profile_id(profile_id ? profile_id : "");
 }
-
-// --- Transport ---
-
-struct nd_transport {
-    nosedive::BLETransport transport;
-    nd_send_callback_t send_cb = nullptr;
-    nd_packet_callback_t packet_cb = nullptr;
-    void* send_ctx = nullptr;
-    void* packet_ctx = nullptr;
-
-    nd_transport(size_t mtu) : transport(mtu) {}
-};
-
-nd_transport_t* nd_transport_create(size_t mtu) { return std::make_unique<nd_transport>(mtu).release(); }
-void nd_transport_destroy(nd_transport_t* t) { std::unique_ptr<nd_transport> p(t); }
-
-void nd_transport_set_send_callback(nd_transport_t* t, nd_send_callback_t cb, void* ctx) {
-    t->send_cb = cb;
-    t->send_ctx = ctx;
-    t->transport.set_send_callback([t](const uint8_t* data, size_t len) {
-        if (t->send_cb) t->send_cb(data, len, t->send_ctx);
-    });
-}
-
-void nd_transport_set_packet_callback(nd_transport_t* t, nd_packet_callback_t cb, void* ctx) {
-    t->packet_cb = cb;
-    t->packet_ctx = ctx;
-    t->transport.set_packet_callback([t](const uint8_t* payload, size_t len) {
-        if (t->packet_cb) t->packet_cb(payload, len, t->packet_ctx);
-    });
-}
-
-void nd_transport_set_mtu(nd_transport_t* t, size_t mtu) { t->transport.set_mtu(mtu); }
-void nd_transport_receive(nd_transport_t* t, const uint8_t* data, size_t len) { t->transport.on_ble_receive(data, len); }
-bool nd_transport_send_payload(nd_transport_t* t, const uint8_t* payload, size_t len) { return t->transport.send_payload(payload, len); }
-bool nd_transport_send_command(nd_transport_t* t, uint8_t cmd) { return t->transport.send_command(cmd); }
-bool nd_transport_send_custom_app_data(nd_transport_t* t, const uint8_t* data, size_t len) { return t->transport.send_custom_app_data(data, len); }
-void nd_transport_reset(nd_transport_t* t) { t->transport.reset(); }
 
 } // extern "C"

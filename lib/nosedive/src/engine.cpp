@@ -1,5 +1,4 @@
 #include "nosedive/engine.hpp"
-#include "nosedive/protocol.hpp"
 #include <algorithm>
 #include <cctype>
 
@@ -8,14 +7,31 @@ namespace nosedive {
 Engine::Engine(const std::string& storage_path)
     : storage_(storage_path) {}
 
-void Engine::set_send_callback(SendCallback cb) {
+// --- Callback setters ---
+
+void Engine::set_write_callback(WriteCallback cb) {
     std::lock_guard lock(mu_);
-    send_cb_ = std::move(cb);
+    write_cb_ = std::move(cb);
 }
 
-void Engine::set_state_callback(StateCallback cb) {
+void Engine::set_telemetry_callback(TelemetryCallback cb) {
     std::lock_guard lock(mu_);
-    state_cb_ = std::move(cb);
+    telemetry_cb_ = std::move(cb);
+}
+
+void Engine::set_board_callback(BoardCallback cb) {
+    std::lock_guard lock(mu_);
+    board_cb_ = std::move(cb);
+}
+
+void Engine::set_refloat_callback(RefloatCallback cb) {
+    std::lock_guard lock(mu_);
+    refloat_cb_ = std::move(cb);
+}
+
+void Engine::set_can_callback(CANCallback cb) {
+    std::lock_guard lock(mu_);
+    can_cb_ = std::move(cb);
 }
 
 void Engine::set_error_callback(ErrorCallback cb) {
@@ -23,35 +39,22 @@ void Engine::set_error_callback(ErrorCallback cb) {
     error_cb_ = std::move(cb);
 }
 
-Telemetry Engine::telemetry() const {
-    std::lock_guard lock(mu_);
-    return telemetry_;
+// --- Platform → Engine ---
+
+void Engine::receive_bytes(const uint8_t* data, size_t len) {
+    decoder_.feed(data, len);
+    while (decoder_.has_packet()) {
+        auto payload = decoder_.pop();
+        if (!payload.empty()) {
+            handle_payload(payload.data(), payload.size());
+        }
+    }
 }
 
-double Engine::speed_kmh() const {
-    std::lock_guard lock(mu_);
-    return telemetry_.speed * 3.6;
-}
-
-double Engine::speed_mph() const {
-    std::lock_guard lock(mu_);
-    return telemetry_.speed * 2.237;
-}
-
-bool Engine::should_show_wizard() const {
-    std::lock_guard lock(mu_);
-    return show_wizard_;
-}
-
-void Engine::dismiss_wizard() {
-    std::lock_guard lock(mu_);
-    show_wizard_ = false;
-}
-
-// --- Connection lifecycle ---
-
-void Engine::on_connected() {
+void Engine::on_connected(size_t mtu) {
     std::unique_lock lock(mu_);
+    mtu_ = mtu;
+    decoder_.reset();
     // Discovery sequence: FW version → CAN scan → Refloat info
     queue_send(build_command(CommPacketID::FWVersion));
     queue_send(build_command(CommPacketID::PingCAN));
@@ -61,6 +64,7 @@ void Engine::on_connected() {
 
 void Engine::on_disconnected() {
     std::unique_lock lock(mu_);
+    decoder_.reset();
     telemetry_ = {};
     active_board_ = std::nullopt;
     main_fw_ = std::nullopt;
@@ -73,7 +77,23 @@ void Engine::on_disconnected() {
     refloat_installed_ = false;
     show_wizard_ = false;
     guessed_type_cache_.clear();
-    queue_notify();
+    flush_pending(lock);
+}
+
+// --- Actions ---
+
+void Engine::dismiss_wizard() {
+    std::lock_guard lock(mu_);
+    show_wizard_ = false;
+}
+
+void Engine::install_refloat() {
+    std::unique_lock lock(mu_);
+    refloat_installing_ = true;
+    refloat_installed_ = false;
+    pending_refloat_ = true;
+    queue_send(build_command(CommPacketID::EraseNewApp));
+    queue_send(build_command(CommPacketID::WriteNewAppData));
     flush_pending(lock);
 }
 
@@ -131,7 +151,6 @@ void Engine::handle_values(const uint8_t* data, size_t len) {
     telemetry_.fault            = vals->fault;
     telemetry_.power            = vals->voltage * vals->avg_input_current;
 
-    // Compute speed and battery % if we have a board
     if (active_board_) {
         telemetry_.speed = speed_from_erpm(
             vals->rpm,
@@ -143,7 +162,7 @@ void Engine::handle_values(const uint8_t* data, size_t len) {
             active_board_->battery_voltage_max);
     }
 
-    queue_notify();
+    pending_telemetry_ = true;
 }
 
 void Engine::handle_fw_version(const uint8_t* data, size_t len) {
@@ -151,25 +170,19 @@ void Engine::handle_fw_version(const uint8_t* data, size_t len) {
     if (!fw) return;
 
     if (awaiting_fw_from_) {
-        // This is a CAN device response
         uint8_t id = *awaiting_fw_from_;
         awaiting_fw_from_ = std::nullopt;
-
         can_devices_.push_back(CANDevice{id, *fw});
         query_next_can_device();
     } else {
-        // Main VESC response
         handle_fw_info(*fw);
     }
-
-    queue_notify();
 }
 
 void Engine::handle_fw_info(const FWVersion& fw) {
     main_fw_ = fw;
-    guessed_type_cache_.clear(); // invalidate cache
+    guessed_type_cache_.clear();
 
-    // Create or update active board
     Board board;
     if (active_board_) {
         board = *active_board_;
@@ -185,24 +198,24 @@ void Engine::handle_fw_info(const FWVersion& fw) {
 
     active_board_ = board;
 
-    // Check if this board is in the fleet (mu_ already held)
     if (!is_known_board_locked()) {
         show_wizard_ = true;
     }
+
+    pending_board_ = true;
 }
 
 void Engine::handle_ping_can(const uint8_t* data, size_t len) {
     can_device_ids_ = parse_ping_can(data, len);
     can_devices_.clear();
 
-    // Queue non-zero IDs for sequential FW queries
     pending_can_queries_.clear();
     for (auto id : can_device_ids_) {
         if (id != 0) pending_can_queries_.push_back(id);
     }
 
     query_next_can_device();
-    queue_notify();
+    pending_can_ = true;
 }
 
 void Engine::handle_custom_app_data(const uint8_t* data, size_t len) {
@@ -211,21 +224,19 @@ void Engine::handle_custom_app_data(const uint8_t* data, size_t len) {
 
     refloat_info_ = *info;
 
-    // Update active board with refloat version
     if (active_board_) {
         active_board_->refloat_version = info->version_string();
     }
 
-    queue_notify();
+    pending_refloat_ = true;
 }
 
 void Engine::handle_write_new_app_data() {
-    // Refloat install complete — re-query
     refloat_installing_ = false;
     refloat_installed_ = true;
     queue_send(build_command(CommPacketID::FWVersion));
     queue_send(build_refloat_info_request());
-    queue_notify();
+    pending_refloat_ = true;
 }
 
 void Engine::query_next_can_device() {
@@ -239,70 +250,6 @@ void Engine::query_next_can_device() {
     queue_send(build_fw_version_request_can(next_id));
 }
 
-// --- Refloat install ---
-
-void Engine::install_refloat() {
-    std::unique_lock lock(mu_);
-    refloat_installing_ = true;
-    refloat_installed_ = false;
-    queue_send(build_command(CommPacketID::EraseNewApp));
-    queue_send(build_command(CommPacketID::WriteNewAppData));
-    queue_notify();
-    flush_pending(lock);
-}
-
-// --- Thread-safe getters ---
-
-std::optional<Board> Engine::active_board() const {
-    std::lock_guard lock(mu_);
-    return active_board_;
-}
-
-std::vector<uint8_t> Engine::can_device_ids() const {
-    std::lock_guard lock(mu_);
-    return can_device_ids_;
-}
-
-std::vector<CANDevice> Engine::can_devices() const {
-    std::lock_guard lock(mu_);
-    return can_devices_;
-}
-
-std::optional<FWVersion> Engine::main_fw() const {
-    std::lock_guard lock(mu_);
-    return main_fw_;
-}
-
-std::optional<RefloatInfo> Engine::refloat_info() const {
-    std::lock_guard lock(mu_);
-    return refloat_info_;
-}
-
-bool Engine::refloat_installing() const {
-    std::lock_guard lock(mu_);
-    return refloat_installing_;
-}
-
-bool Engine::refloat_installed() const {
-    std::lock_guard lock(mu_);
-    return refloat_installed_;
-}
-
-std::vector<Board> Engine::boards() const {
-    std::lock_guard lock(mu_);
-    return storage_.boards();
-}
-
-std::vector<RiderProfile> Engine::profiles() const {
-    std::lock_guard lock(mu_);
-    return storage_.profiles();
-}
-
-std::string Engine::active_profile_id() const {
-    std::lock_guard lock(mu_);
-    return storage_.active_profile_id();
-}
-
 // --- Board identification ---
 
 bool Engine::is_known_board_locked() const {
@@ -310,35 +257,12 @@ bool Engine::is_known_board_locked() const {
     return storage_.find_board(main_fw_->uuid).has_value();
 }
 
-bool Engine::is_known_board() const {
-    std::lock_guard lock(mu_);
-    return is_known_board_locked();
-}
-
-const char* Engine::guessed_board_type() const {
-    std::lock_guard lock(mu_);
-    if (!guessed_type_cache_.empty()) return guessed_type_cache_.c_str();
-    if (!main_fw_) return nullptr;
-
-    std::string hw = main_fw_->hw_name;
-    std::transform(hw.begin(), hw.end(), hw.begin(),
-                   [](unsigned char c) { return std::tolower(c); });
-
-    if (hw.find("thor") != std::string::npos) { guessed_type_cache_ = "Funwheel X7"; }
-    else if (hw.find("ubox") != std::string::npos) { guessed_type_cache_ = "DIY Ubox Build"; }
-    else if (hw.find("little focer") != std::string::npos) { guessed_type_cache_ = "XR VESC Conversion"; }
-    else if (hw.find("75/300") != std::string::npos || hw.find("100/250") != std::string::npos) { guessed_type_cache_ = "Trampa VESC Build"; }
-    else if (hw.find("mk6") != std::string::npos || hw.find("mk5") != std::string::npos || hw.find("mk4") != std::string::npos) { guessed_type_cache_ = "VESC Build"; }
-
-    return guessed_type_cache_.empty() ? nullptr : guessed_type_cache_.c_str();
-}
-
-bool Engine::has_refloat() const {
-    std::lock_guard lock(mu_);
-    return main_fw_ && main_fw_->custom_config_count > 0;
-}
-
 // --- Storage delegates ---
+
+std::vector<Board> Engine::boards() const {
+    std::lock_guard lock(mu_);
+    return storage_.boards();
+}
 
 void Engine::save_board(const Board& board) {
     std::lock_guard lock(mu_);
@@ -348,6 +272,11 @@ void Engine::save_board(const Board& board) {
 void Engine::remove_board(std::string_view id) {
     std::lock_guard lock(mu_);
     storage_.remove_board(id);
+}
+
+std::vector<RiderProfile> Engine::profiles() const {
+    std::lock_guard lock(mu_);
+    return storage_.profiles();
 }
 
 void Engine::save_profile(const RiderProfile& profile) {
@@ -360,41 +289,86 @@ void Engine::remove_profile(std::string_view id) {
     storage_.remove_profile(id);
 }
 
+std::string Engine::active_profile_id() const {
+    std::lock_guard lock(mu_);
+    return storage_.active_profile_id();
+}
+
 void Engine::set_active_profile_id(const std::string& id) {
     std::lock_guard lock(mu_);
     storage_.set_active_profile_id(id);
 }
 
-// --- Deferred callback helpers ---
+// --- Deferred work helpers ---
 
 void Engine::queue_send(const std::vector<uint8_t>& payload) {
-    pending_sends_.push_back(payload);
-}
-
-void Engine::queue_notify() {
-    pending_notify_ = true;
+    // Encode as VESC framed packet
+    auto pkt = encode_packet(payload.data(), payload.size());
+    if (!pkt.empty()) {
+        pending_sends_.push_back(std::move(pkt));
+    }
 }
 
 void Engine::flush_pending(std::unique_lock<std::mutex>& lock) {
-    // Move pending work out while still locked
+    // Snapshot all pending work while locked
     auto sends = std::move(pending_sends_);
     pending_sends_.clear();
     auto errors = std::move(pending_errors_);
     pending_errors_.clear();
-    bool notify = pending_notify_;
-    pending_notify_ = false;
-    auto send_cb = send_cb_;
-    auto state_cb = state_cb_;
+
+    bool fire_telemetry = pending_telemetry_;
+    bool fire_board = pending_board_;
+    bool fire_refloat = pending_refloat_;
+    bool fire_can = pending_can_;
+    pending_telemetry_ = pending_board_ = pending_refloat_ = pending_can_ = false;
+
+    // Snapshot state for callbacks (copies while locked)
+    auto telemetry = telemetry_;
+    auto board = active_board_;
+    auto fw = main_fw_;
+    bool wizard = show_wizard_;
+    bool known = is_known_board_locked();
+    bool has_rf = refloat_info_.has_value();
+    auto refloat = refloat_info_;
+    bool rf_installing = refloat_installing_;
+    bool rf_installed = refloat_installed_;
+    auto can_ids = can_device_ids_;
+
+    // Snapshot callbacks
+    auto write_cb = write_cb_;
+    auto telemetry_cb = telemetry_cb_;
+    auto board_cb = board_cb_;
+    auto refloat_cb = refloat_cb_;
+    auto can_cb = can_cb_;
     auto error_cb = error_cb_;
 
-    // Release lock BEFORE firing callbacks — prevents deadlock on re-entry
+    // Release lock BEFORE firing callbacks
     lock.unlock();
 
+    // Write outgoing packets (already framed)
     for (auto& pkt : sends) {
-        if (send_cb) send_cb(pkt.data(), pkt.size());
+        if (write_cb) {
+            size_t offset = 0;
+            while (offset < pkt.size()) {
+                size_t chunk = std::min(mtu_, pkt.size() - offset);
+                write_cb(pkt.data() + offset, chunk);
+                offset += chunk;
+            }
+        }
     }
-    if (notify && state_cb) {
-        state_cb();
+
+    // Fire domain callbacks with copied state
+    if (fire_telemetry && telemetry_cb) {
+        telemetry_cb(telemetry);
+    }
+    if (fire_board && board_cb && board && fw) {
+        board_cb(*board, *fw, wizard, known);
+    }
+    if (fire_refloat && refloat_cb) {
+        refloat_cb(has_rf, refloat, rf_installing, rf_installed);
+    }
+    if (fire_can && can_cb) {
+        can_cb(can_ids);
     }
     for (auto& msg : errors) {
         if (error_cb) error_cb(msg.c_str());

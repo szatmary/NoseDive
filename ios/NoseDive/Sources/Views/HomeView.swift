@@ -237,6 +237,22 @@ struct HomeView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 10))
             }
 
+            // Simulator quick-connect
+            Button {
+                boardManager.connectTCP(host: "127.0.0.1", port: 65102)
+            } label: {
+                HStack {
+                    Image(systemName: "laptopcomputer")
+                    Text("Connect Simulator")
+                }
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .background(Theme.primary.opacity(0.8))
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+
             // TCP connect button
             Button {
                 showTCPSheet = true
@@ -343,9 +359,8 @@ struct HomeView: View {
             }
             .padding()
             .navigationTitle("TCP Connection")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Cancel") { showTCPSheet = false }
                 }
             }

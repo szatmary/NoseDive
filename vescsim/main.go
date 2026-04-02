@@ -10,7 +10,7 @@ import (
 )
 
 func main() {
-	listenAddr := flag.String("addr", "127.0.0.1:0", "TCP listen address")
+	listenAddr := flag.String("addr", "127.0.0.1:65102", "TCP listen address")
 	ble := flag.Bool("ble", false, "Enable BLE advertising (macOS only)")
 	bleName := flag.String("ble-name", "VESC SIM", "BLE device name")
 	web := flag.Bool("web", false, "Enable web GUI")

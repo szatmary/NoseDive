@@ -3,6 +3,16 @@ import Combine
 import Foundation
 import CNoseDive
 
+/// Convert a C fixed-size char array (tuple) to a Swift String.
+/// Works with any tuple of CChar/Int8 up to the tuple's size.
+func cString<T>(_ tuple: T) -> String {
+    withUnsafePointer(to: tuple) { ptr in
+        ptr.withMemoryRebound(to: CChar.self, capacity: MemoryLayout<T>.size) {
+            String(cString: $0)
+        }
+    }
+}
+
 /// Thin GUI shell around the C++ NoseDive engine.
 /// All business logic lives in C++. This class handles:
 /// - Platform transport (BLE/TCP) → feeds payloads to engine
@@ -23,6 +33,7 @@ class BoardManager: ObservableObject {
     @Published var showWizard = false
     @Published var refloatInfo: RefloatInfo?
     @Published var mainFWInfo: FWVersionInfo?
+    @Published var refloatState = RefloatState()
     @Published var refloatInstalling = false
     @Published var refloatInstalled = false
 
@@ -111,13 +122,13 @@ class BoardManager: ObservableObject {
             let fw = nd_engine_get_main_fw(engine)
             if fw.major > 0 || fw.minor > 0 {
                 mainFWInfo = FWVersionInfo(
-                    hwName: String(cString: fw.hw_name),
+                    hwName: cString(fw.hw_name),
                     major: fw.major,
                     minor: fw.minor,
-                    uuid: String(cString: fw.uuid),
+                    uuid: cString(fw.uuid),
                     hwType: fw.hw_type,
                     customConfigCount: fw.custom_config_count,
-                    packageName: String(cString: fw.package_name)
+                    packageName: cString(fw.package_name)
                 )
             } else {
                 mainFWInfo = nil
@@ -127,17 +138,23 @@ class BoardManager: ObservableObject {
         }
 
         // Wizard
-        showWizard = nd_engine_should_show_wizard(engine)
+        let wizardFlag = nd_engine_should_show_wizard(engine)
+        let isKnown = nd_engine_is_known_board(engine)
+        let hasActive = nd_engine_has_active_board(engine)
+        if wizardFlag || hasActive {
+            NSLog("WIZARD: flag=%d isKnown=%d hasActive=%d connState=%@", wizardFlag ? 1 : 0, isKnown ? 1 : 0, hasActive ? 1 : 0, String(describing: connectionState))
+        }
+        showWizard = wizardFlag
 
         // Refloat
         if nd_engine_has_refloat(engine) {
             let ri = nd_engine_get_refloat_info(engine)
             refloatInfo = RefloatInfo(
-                name: String(cString: ri.name),
+                name: cString(ri.name),
                 major: ri.major,
                 minor: ri.minor,
                 patch: ri.patch,
-                suffix: String(cString: ri.suffix)
+                suffix: cString(ri.suffix)
             )
         } else {
             refloatInfo = nil
@@ -252,11 +269,13 @@ class BoardManager: ObservableObject {
         }, selfPtr)
 
         // Transport packet callback → complete VESC payload → engine
+        // Copy payload immediately — the pointer is only valid during this callback
         nd_transport_set_packet_callback(transport, { payload, len, ctx in
             guard let ctx, let payload else { return }
+            let copied = Array(UnsafeBufferPointer(start: payload, count: len))
             let mgr = Unmanaged<BoardManager>.fromOpaque(ctx).takeUnretainedValue()
-            Task { @MainActor in
-                nd_engine_handle_payload(mgr.engine, payload, len)
+            copied.withUnsafeBufferPointer { buf in
+                nd_engine_handle_payload(mgr.engine, buf.baseAddress, buf.count)
             }
         }, selfPtr)
     }
@@ -342,6 +361,10 @@ class BoardManager: ObservableObject {
     func dismissWizard() {
         nd_engine_dismiss_wizard(engine)
         showWizard = false
+    }
+
+    func saveToDisk() {
+        // Engine auto-persists via storage layer — explicit save is a no-op
     }
 
     // MARK: - Computed

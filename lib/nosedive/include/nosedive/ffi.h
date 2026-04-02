@@ -1,10 +1,8 @@
 #pragma once
 
 // C API for FFI from Swift (direct) and Kotlin (JNI wrapper).
-// All functions use C linkage and plain types — no C++ types cross the boundary.
-//
-// Architecture: C++ Engine owns all business logic. Platform code (Swift/Kotlin)
-// creates an engine, feeds it raw VESC payloads, and reads state via getters.
+// Platform provides raw byte I/O. Engine handles all protocol logic internally.
+// Engine pushes parsed state back via domain-specific callbacks (structs by value).
 
 #include <stdint.h>
 #include <stddef.h>
@@ -14,36 +12,32 @@
 extern "C" {
 #endif
 
-// --- Engine ---
-// Opaque handle to the C++ Engine.
+// --- Engine lifecycle ---
 typedef struct nd_engine nd_engine_t;
 
-// Callback: engine wants to send a VESC payload (platform must frame + write to transport).
-typedef void (*nd_engine_send_cb)(const uint8_t* payload, size_t len, void* ctx);
-
-// Callback: engine state changed (platform should refresh UI).
-typedef void (*nd_engine_state_cb)(void* ctx);
-
-// Callback: engine diagnostic message (unknown commands, parse failures).
-typedef void (*nd_engine_error_cb)(const char* message, void* ctx);
-
-// Create engine with storage path. Loads persisted data.
 nd_engine_t* nd_engine_create(const char* storage_path);
 void nd_engine_destroy(nd_engine_t* e);
 
-// Set callbacks (call before connecting).
-void nd_engine_set_send_callback(nd_engine_t* e, nd_engine_send_cb cb, void* ctx);
-void nd_engine_set_state_callback(nd_engine_t* e, nd_engine_state_cb cb, void* ctx);
-void nd_engine_set_error_callback(nd_engine_t* e, nd_engine_error_cb cb, void* ctx);
+// --- Platform → Engine ---
 
-// Connection lifecycle — engine sends discovery commands on connect.
-void nd_engine_on_connected(nd_engine_t* e);
+// Feed raw bytes from BLE/TCP. Engine decodes VESC packets internally.
+void nd_engine_receive_bytes(nd_engine_t* e, const uint8_t* data, size_t len);
+
+// Connection lifecycle. MTU is for chunking outgoing packets (use 4096 for TCP).
+void nd_engine_on_connected(nd_engine_t* e, size_t mtu);
 void nd_engine_on_disconnected(nd_engine_t* e);
 
-// Feed a raw VESC payload (after packet decoding). Engine dispatches internally.
-void nd_engine_handle_payload(nd_engine_t* e, const uint8_t* data, size_t len);
+// Actions
+void nd_engine_install_refloat(nd_engine_t* e);
+void nd_engine_dismiss_wizard(nd_engine_t* e);
 
-// --- Telemetry (read-only, updated after each COMM_GET_VALUES) ---
+// --- Engine → Platform: write raw bytes to wire ---
+typedef void (*nd_write_cb)(const uint8_t* data, size_t len, void* ctx);
+void nd_engine_set_write_callback(nd_engine_t* e, nd_write_cb cb, void* ctx);
+
+// --- Engine → Platform: domain callbacks (structs by value) ---
+
+// Telemetry (fires on each COMM_GET_VALUES response)
 typedef struct {
     double temp_mosfet;
     double temp_motor;
@@ -53,18 +47,58 @@ typedef struct {
     double erpm;
     double battery_voltage;
     double battery_percent;
-    double speed;           // m/s (computed from board config)
-    double power;           // watts
+    double speed;
+    double power;
     int32_t tachometer;
     int32_t tachometer_abs;
     uint8_t fault;
 } nd_telemetry_t;
 
-nd_telemetry_t nd_engine_get_telemetry(const nd_engine_t* e);
-double nd_engine_speed_kmh(const nd_engine_t* e);
-double nd_engine_speed_mph(const nd_engine_t* e);
+typedef void (*nd_telemetry_cb)(nd_telemetry_t telemetry, void* ctx);
+void nd_engine_set_telemetry_callback(nd_engine_t* e, nd_telemetry_cb cb, void* ctx);
 
-// --- Active board ---
+// Board identified (fires on FW_VERSION response)
+typedef struct {
+    char id[64];
+    char name[128];
+    char hw_name[64];
+    uint8_t fw_major;
+    uint8_t fw_minor;
+    char uuid[64];
+    uint8_t hw_type;
+    uint8_t custom_config_count;
+    char package_name[64];
+    bool show_wizard;
+    bool is_known;
+} nd_board_event_t;
+
+typedef void (*nd_board_cb)(nd_board_event_t board, void* ctx);
+void nd_engine_set_board_callback(nd_engine_t* e, nd_board_cb cb, void* ctx);
+
+// Refloat state changed
+typedef struct {
+    bool has_refloat;
+    char name[21];
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    char suffix[21];
+    bool installing;
+    bool installed;
+} nd_refloat_event_t;
+
+typedef void (*nd_refloat_cb)(nd_refloat_event_t info, void* ctx);
+void nd_engine_set_refloat_callback(nd_engine_t* e, nd_refloat_cb cb, void* ctx);
+
+// CAN devices discovered
+typedef void (*nd_can_cb)(const uint8_t* ids, size_t count, void* ctx);
+void nd_engine_set_can_callback(nd_engine_t* e, nd_can_cb cb, void* ctx);
+
+// Diagnostic errors
+typedef void (*nd_error_cb)(const char* message, void* ctx);
+void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx);
+
+// --- Board fleet (persisted) ---
 typedef struct {
     char id[64];
     char name[128];
@@ -86,51 +120,6 @@ typedef struct {
     char active_profile_id[64];
 } nd_board_t;
 
-// Returns true if there is an active board (connected).
-bool nd_engine_has_active_board(const nd_engine_t* e);
-nd_board_t nd_engine_get_active_board(const nd_engine_t* e);
-bool nd_engine_is_known_board(const nd_engine_t* e);
-// Returns NULL if can't guess. Returned string valid until next engine call.
-const char* nd_engine_guessed_board_type(const nd_engine_t* e);
-
-// --- CAN devices ---
-size_t nd_engine_can_device_count(const nd_engine_t* e);
-uint8_t nd_engine_can_device_id(const nd_engine_t* e, size_t index);
-
-// --- Firmware info ---
-typedef struct {
-    uint8_t major;
-    uint8_t minor;
-    char hw_name[64];
-    char uuid[64];
-    uint8_t hw_type;
-    uint8_t custom_config_count;
-    char package_name[64];
-} nd_fw_version_t;
-
-nd_fw_version_t nd_engine_get_main_fw(const nd_engine_t* e);
-
-// --- Refloat ---
-bool nd_engine_has_refloat(const nd_engine_t* e);
-
-typedef struct {
-    char name[21];
-    uint8_t major;
-    uint8_t minor;
-    uint8_t patch;
-    char suffix[21];
-} nd_refloat_info_t;
-
-nd_refloat_info_t nd_engine_get_refloat_info(const nd_engine_t* e);
-bool nd_engine_refloat_installing(const nd_engine_t* e);
-bool nd_engine_refloat_installed(const nd_engine_t* e);
-void nd_engine_install_refloat(nd_engine_t* e);
-
-// --- Wizard ---
-bool nd_engine_should_show_wizard(const nd_engine_t* e);
-void nd_engine_dismiss_wizard(nd_engine_t* e);
-
-// --- Board fleet (persisted) ---
 size_t nd_engine_board_count(const nd_engine_t* e);
 nd_board_t nd_engine_get_board(const nd_engine_t* e, size_t index);
 void nd_engine_save_board(nd_engine_t* e, nd_board_t board);
@@ -161,22 +150,6 @@ void nd_engine_remove_profile(nd_engine_t* e, const char* id);
 
 const char* nd_engine_active_profile_id(const nd_engine_t* e);
 void nd_engine_set_active_profile_id(nd_engine_t* e, const char* profile_id);
-
-// --- Transport (VESC packet framing + MTU chunking for BLE/TCP) ---
-typedef struct nd_transport nd_transport_t;
-typedef void (*nd_send_callback_t)(const uint8_t* data, size_t len, void* ctx);
-typedef void (*nd_packet_callback_t)(const uint8_t* payload, size_t len, void* ctx);
-
-nd_transport_t* nd_transport_create(size_t mtu);
-void nd_transport_destroy(nd_transport_t* t);
-void nd_transport_set_send_callback(nd_transport_t* t, nd_send_callback_t cb, void* ctx);
-void nd_transport_set_packet_callback(nd_transport_t* t, nd_packet_callback_t cb, void* ctx);
-void nd_transport_set_mtu(nd_transport_t* t, size_t mtu);
-void nd_transport_receive(nd_transport_t* t, const uint8_t* data, size_t len);
-bool nd_transport_send_payload(nd_transport_t* t, const uint8_t* payload, size_t len);
-bool nd_transport_send_command(nd_transport_t* t, uint8_t cmd);
-bool nd_transport_send_custom_app_data(nd_transport_t* t, const uint8_t* data, size_t len);
-void nd_transport_reset(nd_transport_t* t);
 
 #ifdef __cplusplus
 }

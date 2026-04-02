@@ -11,7 +11,6 @@ set(NOSEDIVE_SOURCES
     src/commands.cpp
     src/profile.cpp
     src/refloat.cpp
-    src/ble_transport.cpp
     src/storage.cpp
     src/engine.cpp
 )

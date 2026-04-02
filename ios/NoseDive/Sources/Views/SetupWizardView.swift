@@ -98,9 +98,8 @@ struct SetupWizardView: View {
             }
             .background(Theme.background)
             .navigationTitle("Board Setup")
-            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) {
+                ToolbarItem(placement: .cancellationAction) {
                     if currentIndex > 0 && currentStep != .complete {
                         Button("Back") { goBack() }
                     } else {

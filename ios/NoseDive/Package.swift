@@ -7,15 +7,12 @@ let package = Package(
         .iOS(.v17),
         .macOS(.v14)
     ],
-    products: [
-        .library(name: "NoseDive", targets: ["NoseDive"])
-    ],
     targets: [
         .systemLibrary(
             name: "CNoseDive",
             path: "Sources/CNoseDive"
         ),
-        .target(
+        .executableTarget(
             name: "NoseDive",
             dependencies: ["CNoseDive"],
             path: "Sources",

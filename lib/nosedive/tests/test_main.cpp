@@ -310,67 +310,7 @@ static void test_refloat_compat_decoders() {
     ASSERT(decode_sat_compat(7) == SAT::PBSpeed, "sat 7 = pb_speed");
 }
 
-// --- BLE Transport test ---
-static void test_ble_transport() {
-    nosedive::BLETransport transport(20);
-
-    // Track what gets sent
-    std::vector<std::vector<uint8_t>> sent_chunks;
-    transport.set_send_callback([&](const uint8_t* data, size_t len) {
-        sent_chunks.emplace_back(data, data + len);
-    });
-
-    // Track received packets
-    std::vector<std::vector<uint8_t>> received;
-    transport.set_packet_callback([&](const uint8_t* payload, size_t len) {
-        received.emplace_back(payload, payload + len);
-    });
-
-    // Send a payload — should chunk to MTU
-    uint8_t payload[] = {0x04};
-    ASSERT(transport.send_payload(payload, 1), "send_payload returns true");
-    ASSERT(!sent_chunks.empty(), "send callback was called");
-
-    // Now simulate receiving the same data back
-    for (auto& chunk : sent_chunks) {
-        transport.on_ble_receive(chunk.data(), chunk.size());
-    }
-    ASSERT_EQ(received.size(), 1u, "received one packet");
-    ASSERT_EQ(received[0].size(), 1u, "received payload size");
-    ASSERT_EQ(received[0][0], 0x04, "received payload content");
-}
-
-// (test_ffi_decoder removed — nd_decoder_* removed from FFI)
-
-static void test_ffi_transport() {
-    nd_transport_t* t = nd_transport_create(20);
-    ASSERT(t != nullptr, "transport create non-null");
-
-    // Set up send callback
-    static std::vector<uint8_t> all_sent;
-    all_sent.clear();
-    nd_transport_set_send_callback(t, [](const uint8_t* data, size_t len, void*) {
-        all_sent.insert(all_sent.end(), data, data + len);
-    }, nullptr);
-
-    // Set up receive callback
-    static std::vector<uint8_t> last_payload;
-    last_payload.clear();
-    nd_transport_set_packet_callback(t, [](const uint8_t* payload, size_t len, void*) {
-        last_payload.assign(payload, payload + len);
-    }, nullptr);
-
-    // Send a command
-    ASSERT(nd_transport_send_command(t, 0x04), "transport send_command");
-    ASSERT(!all_sent.empty(), "transport sent data");
-
-    // Feed the sent data back as received
-    nd_transport_receive(t, all_sent.data(), all_sent.size());
-    ASSERT_EQ(last_payload.size(), 1u, "transport received payload size");
-    ASSERT_EQ(last_payload[0], 0x04, "transport received payload content");
-
-    nd_transport_destroy(t);
-}
+// (BLETransport and nd_transport tests removed — transport is now internal to engine)
 
 // --- Storage C++ round-trip ---
 // --- FW version parsing ---
@@ -651,26 +591,34 @@ static void test_engine_ffi() {
     std::remove(path);
 }
 
-// --- Engine payload handling ---
+// --- Engine receive_bytes + domain callbacks ---
 static void test_engine_payload() {
     const char* path = "/tmp/nosedive_test_engine_payload.json";
     std::remove(path);
 
     auto* e = nd_engine_create(path);
 
-    // Track sent payloads
-    static std::vector<std::vector<uint8_t>> sent;
-    sent.clear();
-    nd_engine_set_send_callback(e, [](const uint8_t* data, size_t len, void*) {
-        sent.emplace_back(data, data + len);
+    // Track writes (framed packets out)
+    static std::vector<uint8_t> written;
+    written.clear();
+    nd_engine_set_write_callback(e, [](const uint8_t* data, size_t len, void*) {
+        written.insert(written.end(), data, data + len);
     }, nullptr);
 
-    // Simulate connection — should trigger FW, CAN, Refloat requests
-    nd_engine_on_connected(e);
-    ASSERT(sent.size() >= 3, "engine: sends discovery on connect");
+    // Track board callback
+    static bool got_board = false;
+    static nd_board_event_t last_board = {};
+    got_board = false;
+    nd_engine_set_board_callback(e, [](nd_board_event_t board, void*) {
+        got_board = true;
+        last_board = board;
+    }, nullptr);
 
-    // Feed a FW version response
-    // [cmd=0][major=6][minor=5][hw="TestHW"\0][uuid:12 bytes]
+    // Simulate connection — should write discovery packets
+    nd_engine_on_connected(e, 512);
+    ASSERT(!written.empty(), "engine: writes discovery on connect");
+
+    // Build a FW_VERSION response and frame it as a VESC packet
     std::vector<uint8_t> fw_payload;
     fw_payload.push_back(0x00); // COMM_FW_VERSION
     fw_payload.push_back(6);    // major
@@ -678,25 +626,22 @@ static void test_engine_payload() {
     const char* hw = "TestHW";
     for (size_t i = 0; hw[i]; i++) fw_payload.push_back(hw[i]);
     fw_payload.push_back(0); // null terminator
-    // UUID: 12 bytes
-    for (int i = 0; i < 12; i++) fw_payload.push_back(0xA0 + i);
+    for (int i = 0; i < 12; i++) fw_payload.push_back(0xA0 + i); // UUID
 
-    nd_engine_handle_payload(e, fw_payload.data(), fw_payload.size());
+    auto framed = nosedive::encode_packet(fw_payload.data(), fw_payload.size());
+    ASSERT(!framed.empty(), "engine: framed FW response");
 
-    ASSERT(nd_engine_has_active_board(e), "engine: has active board after FW");
+    // Feed raw bytes — engine decodes internally
+    nd_engine_receive_bytes(e, framed.data(), framed.size());
 
-    nd_fw_version_t fw = nd_engine_get_main_fw(e);
-    ASSERT_EQ(fw.major, 6, "engine: fw major");
-    ASSERT_EQ(fw.minor, 5, "engine: fw minor");
-    ASSERT_EQ(std::string(fw.hw_name), "TestHW", "engine: fw hw_name");
-
-    // Telemetry should be zeroed initially
-    nd_telemetry_t tel = nd_engine_get_telemetry(e);
-    ASSERT_NEAR(tel.speed, 0.0, 0.001, "engine: initial speed 0");
+    ASSERT(got_board, "engine: board callback fired");
+    ASSERT_EQ(last_board.fw_major, 6, "engine: fw major");
+    ASSERT_EQ(last_board.fw_minor, 5, "engine: fw minor");
+    ASSERT_EQ(std::string(last_board.hw_name), "TestHW", "engine: hw_name");
+    ASSERT(last_board.show_wizard, "engine: wizard for unknown board");
 
     // Disconnect
     nd_engine_on_disconnected(e);
-    ASSERT(!nd_engine_has_active_board(e), "engine: no board after disconnect");
 
     nd_engine_destroy(e);
     std::remove(path);
@@ -717,8 +662,7 @@ int main() {
     test_packet_decoder_multiple();
     test_refloat_command_builders();
     test_refloat_compat_decoders();
-    test_ble_transport();
-    test_ffi_transport();
+    // (transport tests removed — transport is internal to engine)
     test_parse_fw_version();
     test_parse_ping_can();
     test_parse_refloat_info();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "nosedive/commands.hpp"
+#include "nosedive/protocol.hpp"
 #include "nosedive/storage.hpp"
 #include <cstdint>
 #include <functional>
@@ -13,13 +14,14 @@
 
 namespace nosedive {
 
-/// Callback to send a framed VESC packet payload to the transport.
-using SendCallback = std::function<void(const uint8_t* payload, size_t len)>;
+/// Callback to write raw bytes to the wire (BLE/TCP). Platform implements this.
+using WriteCallback = std::function<void(const uint8_t* data, size_t len)>;
 
-/// Callback when engine state changes and UI should refresh.
-using StateCallback = std::function<void()>;
-
-/// Callback for diagnostic messages (unknown commands, parse failures).
+/// Domain callbacks — engine pushes parsed state to the platform.
+using TelemetryCallback = std::function<void(const Telemetry&)>;
+using BoardCallback = std::function<void(const Board&, const FWVersion&, bool show_wizard, bool is_known)>;
+using RefloatCallback = std::function<void(bool has_refloat, const std::optional<RefloatInfo>&, bool installing, bool installed)>;
+using CANCallback = std::function<void(const std::vector<uint8_t>& ids)>;
 using ErrorCallback = std::function<void(const char* message)>;
 
 /// CAN device info discovered during enumeration.
@@ -28,50 +30,27 @@ struct CANDevice {
     FWVersion fw;
 };
 
-/// The application engine. Owns all business logic and state.
-/// Platform layer (Swift/Kotlin) feeds raw payloads in, reads state out.
+/// The application engine. Owns all business logic, protocol codec, and state.
+/// Platform layer (Swift/Kotlin) feeds raw bytes in, receives parsed structs via callbacks.
 class Engine {
 public:
     explicit Engine(const std::string& storage_path);
 
-    // --- Transport callbacks ---
-    void set_send_callback(SendCallback cb);
-    void set_state_callback(StateCallback cb);
+    // --- Callbacks (set before connecting) ---
+    void set_write_callback(WriteCallback cb);
+    void set_telemetry_callback(TelemetryCallback cb);
+    void set_board_callback(BoardCallback cb);
+    void set_refloat_callback(RefloatCallback cb);
+    void set_can_callback(CANCallback cb);
     void set_error_callback(ErrorCallback cb);
 
-    // --- Connection lifecycle ---
-    void on_connected();
+    // --- Platform → Engine ---
+    void receive_bytes(const uint8_t* data, size_t len);
+    void on_connected(size_t mtu = 512);
     void on_disconnected();
 
-    // --- Payload handling (called by transport layer) ---
-    void handle_payload(const uint8_t* data, size_t len);
-
-    // --- Telemetry state (read by GUI) ---
-    Telemetry telemetry() const;
-    double speed_kmh() const;
-    double speed_mph() const;
-
-    // --- Active board ---
-    std::optional<Board> active_board() const;
-    bool is_known_board() const;
-    const char* guessed_board_type() const;
-
-    // --- CAN devices ---
-    std::vector<uint8_t> can_device_ids() const;
-    std::vector<CANDevice> can_devices() const;
-
-    // --- FW info ---
-    std::optional<FWVersion> main_fw() const;
-
-    // --- Refloat ---
-    bool has_refloat() const;
-    std::optional<RefloatInfo> refloat_info() const;
-    bool refloat_installing() const;
-    bool refloat_installed() const;
+    // --- Actions ---
     void install_refloat();
-
-    // --- Wizard ---
-    bool should_show_wizard() const;
     void dismiss_wizard();
 
     // --- Board CRUD (delegates to storage) ---
@@ -92,8 +71,15 @@ public:
 private:
     mutable std::mutex mu_;
     Storage storage_;
-    SendCallback send_cb_;
-    StateCallback state_cb_;
+    PacketDecoder decoder_;
+    size_t mtu_ = 512;
+
+    // Callbacks
+    WriteCallback write_cb_;
+    TelemetryCallback telemetry_cb_;
+    BoardCallback board_cb_;
+    RefloatCallback refloat_cb_;
+    CANCallback can_cb_;
     ErrorCallback error_cb_;
 
     // Live state
@@ -118,12 +104,16 @@ private:
     // Board type guess result (cached)
     mutable std::string guessed_type_cache_;
 
-    // Deferred callback queues (populated under lock, flushed outside)
+    // Deferred work queues (populated under lock, flushed outside)
     std::vector<std::vector<uint8_t>> pending_sends_;
     std::vector<std::string> pending_errors_;
-    bool pending_notify_ = false;
+    bool pending_telemetry_ = false;
+    bool pending_board_ = false;
+    bool pending_refloat_ = false;
+    bool pending_can_ = false;
 
     // --- Internal handlers (called with mu_ held) ---
+    void handle_payload(const uint8_t* data, size_t len);
     void handle_values(const uint8_t* data, size_t len);
     void handle_fw_version(const uint8_t* data, size_t len);
     void handle_ping_can(const uint8_t* data, size_t len);
@@ -131,11 +121,10 @@ private:
     void handle_write_new_app_data();
     void handle_fw_info(const FWVersion& fw);
     void query_next_can_device();
-    bool is_known_board_locked() const; // mu_ already held
+    bool is_known_board_locked() const;
 
-    // Deferred callback helpers — queue work while locked, flush after unlock
+    // Deferred work helpers
     void queue_send(const std::vector<uint8_t>& payload);
-    void queue_notify();
     void flush_pending(std::unique_lock<std::mutex>& lock);
 };
 

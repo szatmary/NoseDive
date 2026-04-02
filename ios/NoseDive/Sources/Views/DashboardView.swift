@@ -156,8 +156,8 @@ struct DashboardView: View {
                 .foregroundStyle(Theme.textSecondary)
             Spacer()
             HStack(spacing: 8) {
-                footpadSide("L", active: boardManager.refloatState.footpad == .left || boardManager.refloatState.footpad == .both)
-                footpadSide("R", active: boardManager.refloatState.footpad == .right || boardManager.refloatState.footpad == .both)
+                footpadSide("L", active: [.left, .both].contains(boardManager.refloatState.footpad))
+                footpadSide("R", active: [.right, .both].contains(boardManager.refloatState.footpad))
             }
         }
         .card()
