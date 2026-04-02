@@ -177,13 +177,20 @@ void SetupBoard::retry() {
 }
 
 void SetupBoard::skip() {
-    // Cannot skip Refloat installation
-    if (state_.step == SetupStep::InstallRefloat) return;
+    // Can skip Refloat update (outdated), but not fresh install
+    if (state_.step == SetupStep::InstallRefloat && !refloat_info) return;
     state_.error.clear();
     advance();
 }
 
 void SetupBoard::update() {
+    // Refloat update: start the install sequence
+    if (state_.step == SetupStep::InstallRefloat) {
+        set_step(SetupStep::InstallRefloat, "Installing Refloat package...");
+        send_commands_for_step();
+        return;
+    }
+
     update_target_ = target_for_step(state_.step);
     if (update_target_ == UpdateTarget::None) return;
 
@@ -231,8 +238,22 @@ void SetupBoard::advance() {
         return;
 
     case SetupStep::CheckFWVESC:
-        if (has_refloat) {
-            set_step(SetupStep::InstallRefloat, "Refloat already installed");
+        if (refloat_info) {
+            bool outdated = LatestRefloat::is_outdated(
+                refloat_info->major, refloat_info->minor, refloat_info->patch);
+            char buf[256];
+            if (outdated) {
+                std::snprintf(buf, sizeof(buf),
+                    "Refloat %d.%d.%d — update available (%d.%d.%d)",
+                    refloat_info->major, refloat_info->minor, refloat_info->patch,
+                    LatestRefloat::major, LatestRefloat::minor, LatestRefloat::patch);
+                set_step(SetupStep::InstallRefloat, buf);
+                // Pause — user must update() or skip()
+                return;
+            }
+            std::snprintf(buf, sizeof(buf), "Refloat %d.%d.%d — up to date",
+                refloat_info->major, refloat_info->minor, refloat_info->patch);
+            set_step(SetupStep::InstallRefloat, buf);
             advance();
             return;
         }
@@ -573,7 +594,9 @@ void SetupBoard::handle_install_response(vesc::CommPacketID cmd,
     case InstallPhase::SetRunning:
         if (cmd == vesc::CommPacketID::LispSetRunning) {
             install_phase_ = InstallPhase::Done;
-            has_refloat = true;
+            refloat_info = vesc::RefloatInfo{
+                "Refloat", LatestRefloat::major, LatestRefloat::minor,
+                LatestRefloat::patch, ""};
             set_step(SetupStep::InstallRefloat, "Refloat installed");
             advance();
         }

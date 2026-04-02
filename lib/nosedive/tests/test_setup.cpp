@@ -66,7 +66,7 @@ static void test_setup_wizard() {
     fw.uuid = "aabbccddeeff";
     fw.custom_config_count = 1; // Refloat installed
     setup.main_fw = fw;
-    setup.has_refloat = true;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
 
     // Start wizard — should skip Express, BMS, pause at VESC FW (outdated)
     setup.start();
@@ -251,7 +251,7 @@ static void test_setup_wizard_with_can() {
     // Express on CAN 253, BMS on CAN 10
     setup.can_device_ids = {10, 253};
     setup.main_fw = std::nullopt;
-    setup.has_refloat = false;
+    setup.refloat_info = std::nullopt;
     auto test_pkg = make_test_package();
     setup.refloat_package = &test_pkg;
 
@@ -319,7 +319,7 @@ static void test_setup_wizard_error() {
     fw.major = 6; fw.minor = 5; fw.hw_name = "60_MK6";
     fw.custom_config_count = 1;
     setup.main_fw = fw;
-    setup.has_refloat = true;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
 
     setup.start();
     // Paused at CheckFWVESC (outdated) — skip to continue
@@ -378,7 +378,7 @@ static void test_fw_check_outdated_pauses() {
 
     setup.can_device_ids = {};
     setup.main_fw = std::nullopt;
-    setup.has_refloat = true;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
 
     setup.start();
 
@@ -413,7 +413,7 @@ static void test_fw_check_uptodate_advances() {
 
     setup.can_device_ids = {};
     setup.main_fw = std::nullopt;
-    setup.has_refloat = true;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
 
     setup.start();
 
@@ -438,7 +438,7 @@ static void test_fw_update_flow() {
 
     setup.can_device_ids = {};
     setup.main_fw = std::nullopt;
-    setup.has_refloat = true;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
 
     setup.start();
 
@@ -472,7 +472,7 @@ static void test_prepopulated_outdated_fw() {
     fw.uuid = "aabbccddeeff";
     fw.custom_config_count = 1;
     setup.main_fw = fw;
-    setup.has_refloat = true;
+    setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""};
 
     setup.start();
 
@@ -493,7 +493,7 @@ static void test_express_fw_update() {
 
     setup.can_device_ids = {253}; // Express present
     setup.main_fw = std::nullopt;
-    setup.has_refloat = false;
+    setup.refloat_info = std::nullopt;
 
     setup.start();
 
@@ -538,7 +538,7 @@ static void test_refloat_install() {
     fw.uuid = "test-uuid";
     setup.can_device_ids = {};
     setup.main_fw = fw;
-    setup.has_refloat = false;
+    setup.refloat_info = std::nullopt;
 
     auto pkg = make_test_package();
     setup.refloat_package = &pkg;
@@ -610,7 +610,7 @@ static void test_refloat_install() {
     uint8_t running_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning), 1};
     setup.handle_response(running_ack, sizeof(running_ack));
 
-    ASSERT(setup.has_refloat, "refloat_install: has_refloat set after install");
+    ASSERT(setup.refloat_info.has_value(), "refloat_install: refloat_info set after install");
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
               "refloat_install: at DetectBattery after install");
@@ -646,7 +646,7 @@ static void test_refloat_install_chunked() {
     fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
     setup.can_device_ids = {};
     setup.main_fw = fw;
-    setup.has_refloat = false;
+    setup.refloat_info = std::nullopt;
     setup.refloat_package = &pkg;
 
     setup.start();
@@ -707,6 +707,127 @@ static void test_refloat_install_chunked() {
               "chunked: at DetectBattery after full install");
 }
 
+// --- Refloat version check: outdated pauses, up-to-date advances ---
+static void test_refloat_version_check() {
+    // Test 1: Up-to-date Refloat auto-advances
+    {
+        nosedive::SetupBoard setup;
+        setup.set_state_callback([&](const nosedive::SetupState&) {});
+        setup.set_send_callback([&](const std::vector<uint8_t>&) {});
+
+        vesc::FWVersion::Response fw;
+        fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+        setup.can_device_ids = {};
+        setup.main_fw = fw;
+        setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 2, 1, ""}; // latest
+
+        setup.start();
+
+        // Should auto-advance past InstallRefloat to DetectBattery
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+                  "refloat_ver: up-to-date auto-advances");
+    }
+
+    // Test 2: Outdated Refloat pauses
+    {
+        nosedive::SetupBoard setup;
+        setup.set_state_callback([&](const nosedive::SetupState&) {});
+        setup.set_send_callback([&](const std::vector<uint8_t>&) {});
+
+        vesc::FWVersion::Response fw;
+        fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+        setup.can_device_ids = {};
+        setup.main_fw = fw;
+        setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 1, 0, ""}; // outdated
+
+        setup.start();
+
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+                  "refloat_ver: outdated pauses at InstallRefloat");
+        ASSERT(setup.state().detail.find("update available") != std::string::npos,
+               "refloat_ver: detail mentions update available");
+    }
+
+    // Test 3: Outdated Refloat — skip advances past it
+    {
+        nosedive::SetupBoard setup;
+        setup.set_state_callback([&](const nosedive::SetupState&) {});
+        setup.set_send_callback([&](const std::vector<uint8_t>&) {});
+
+        vesc::FWVersion::Response fw;
+        fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+        setup.can_device_ids = {};
+        setup.main_fw = fw;
+        setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 0, 0, ""}; // outdated
+
+        setup.start();
+
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+                  "refloat_ver_skip: paused at InstallRefloat");
+
+        setup.skip();
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+                  "refloat_ver_skip: skip advances to DetectBattery");
+    }
+
+    // Test 4: Outdated Refloat — update() triggers install
+    {
+        nosedive::SetupBoard setup;
+        std::vector<std::vector<uint8_t>> sent;
+        setup.set_state_callback([&](const nosedive::SetupState&) {});
+        setup.set_send_callback([&](const std::vector<uint8_t>& p) {
+            sent.push_back(p);
+        });
+
+        vesc::FWVersion::Response fw;
+        fw.major = 6; fw.minor = 6; fw.hw_name = "60_MK6";
+        setup.can_device_ids = {};
+        setup.main_fw = fw;
+        setup.refloat_info = vesc::RefloatInfo{"Refloat", 1, 0, 0, ""}; // outdated
+        auto pkg = make_test_package();
+        setup.refloat_package = &pkg;
+
+        setup.start();
+
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+                  "refloat_ver_update: paused at InstallRefloat");
+
+        sent.clear();
+        setup.update();
+
+        // Should have started install (sent LispEraseCode)
+        ASSERT(!sent.empty(), "refloat_ver_update: sent erase after update()");
+        ASSERT_EQ(sent.back()[0],
+                  static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode),
+                  "refloat_ver_update: sent LispEraseCode");
+
+        // Complete the install
+        simulate_refloat_install(setup);
+
+        ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+                  static_cast<uint8_t>(nosedive::SetupStep::DetectBattery),
+                  "refloat_ver_update: at DetectBattery after install");
+    }
+}
+
+// --- LatestRefloat::is_outdated unit tests ---
+static void test_refloat_version_comparison() {
+    using LR = nosedive::LatestRefloat;
+    // Latest is 1.2.1
+    ASSERT(LR::is_outdated(1, 2, 0), "refloat_cmp: 1.2.0 < 1.2.1");
+    ASSERT(LR::is_outdated(1, 1, 9), "refloat_cmp: 1.1.9 < 1.2.1");
+    ASSERT(LR::is_outdated(0, 9, 9), "refloat_cmp: 0.9.9 < 1.2.1");
+    ASSERT(!LR::is_outdated(1, 2, 1), "refloat_cmp: 1.2.1 == 1.2.1");
+    ASSERT(!LR::is_outdated(1, 2, 2), "refloat_cmp: 1.2.2 > 1.2.1");
+    ASSERT(!LR::is_outdated(1, 3, 0), "refloat_cmp: 1.3.0 > 1.2.1");
+    ASSERT(!LR::is_outdated(2, 0, 0), "refloat_cmp: 2.0.0 > 1.2.1");
+}
+
 int main() {
     test_setup_wizard();
     test_setup_wizard_with_can();
@@ -719,6 +840,8 @@ int main() {
     test_express_fw_update();
     test_refloat_install();
     test_refloat_install_chunked();
+    test_refloat_version_check();
+    test_refloat_version_comparison();
 
     std::printf("\n%d/%d setup tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;

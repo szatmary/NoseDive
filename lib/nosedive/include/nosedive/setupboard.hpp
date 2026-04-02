@@ -67,6 +67,19 @@ struct LatestFW {
     }
 };
 
+// Known latest Refloat version (bundled with app)
+struct LatestRefloat {
+    static constexpr uint8_t major = 1;
+    static constexpr uint8_t minor = 2;
+    static constexpr uint8_t patch = 1;
+
+    static bool is_outdated(uint8_t maj, uint8_t min, uint8_t pat) {
+        if (maj != major) return maj < major;
+        if (min != minor) return min < minor;
+        return pat < patch;
+    }
+};
+
 struct SetupState {
     SetupStep step = SetupStep::Idle;
     std::string error;    // empty = no error
@@ -133,8 +146,8 @@ public:
     /// Main VESC firmware info (if already known from connection).
     std::optional<vesc::FWVersion::Response> main_fw;
 
-    /// Whether Refloat is already installed.
-    bool has_refloat = false;
+    /// Refloat version info (nullopt if not installed).
+    std::optional<vesc::RefloatInfo> refloat_info;
 
     /// Refloat package data (set by engine before start).
     const vesc::VescPackage* refloat_package = nullptr;

@@ -364,7 +364,14 @@ void Engine::setup_start() {
     std::unique_lock lock(mu_);
     setup_.can_device_ids = can_device_ids_;
     setup_.main_fw = main_fw_;
-    setup_.has_refloat = main_fw_ && main_fw_->custom_config_count > 0;
+    if (refloat_info_) {
+        setup_.refloat_info = vesc::RefloatInfo{
+            refloat_info_->name, refloat_info_->major,
+            refloat_info_->minor, refloat_info_->patch,
+            refloat_info_->suffix};
+    } else {
+        setup_.refloat_info = std::nullopt;
+    }
     setup_.refloat_package = refloat_pkg_ ? &*refloat_pkg_ : nullptr;
     setup_.start();
     pending_setup_ = true;
