@@ -278,7 +278,6 @@ void SetupBoard::advance() {
         return;
 
     case SetupStep::FWVESC: {
-        // Transition to InstallRefloat with appropriate prompt
         char buf[256];
         if (refloat_info) {
             bool outdated = LatestRefloat::is_outdated(
