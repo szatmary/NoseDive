@@ -18,12 +18,7 @@ bool Connection::send(const std::vector<uint8_t>& payload) {
     auto pkt = encode_packet(payload.data(), payload.size());
     if (pkt.empty()) return false;
 
-    size_t offset = 0;
-    while (offset < pkt.size()) {
-        size_t chunk = std::min(mtu_, pkt.size() - offset);
-        write_cb_(pkt.data() + offset, chunk);
-        offset += chunk;
-    }
+    write_cb_(pkt.data(), pkt.size());
     return true;
 }
 
