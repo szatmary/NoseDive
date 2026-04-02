@@ -1,2 +1,0 @@
-/usr/bin/ar qc libvesc.a CMakeFiles/vesc.dir/src/crc.cpp.o CMakeFiles/vesc.dir/src/protocol.cpp.o CMakeFiles/vesc.dir/src/commands.cpp.o CMakeFiles/vesc.dir/src/refloat.cpp.o
-/usr/bin/ranlib libvesc.a

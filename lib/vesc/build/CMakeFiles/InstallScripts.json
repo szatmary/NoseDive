@@ -1,7 +1,0 @@
-{
-	"InstallScripts" : 
-	[
-		"/Users/matthewszatmary/Projects/NoseDive/lib/vesc/build/cmake_install.cmake"
-	],
-	"Parallel" : false
-}
