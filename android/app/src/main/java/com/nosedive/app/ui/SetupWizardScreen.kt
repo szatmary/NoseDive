@@ -250,7 +250,14 @@ private fun FirmwareCard(
     currentFW: String?,
     latestFW: String
 ) {
-    val isUpToDate = currentFW != null && currentFW != "Querying…" && currentFW >= latestFW
+    val isUpToDate = currentFW != null && currentFW != "Querying…" && run {
+        val cur = currentFW.split(".").map { it.toIntOrNull() ?: 0 }
+        val lat = latestFW.split(".").map { it.toIntOrNull() ?: 0 }
+        val maxLen = maxOf(cur.size, lat.size)
+        val c = cur + List(maxLen - cur.size) { 0 }
+        val l = lat + List(maxLen - lat.size) { 0 }
+        c.zip(l).fold(0) { cmp, (a, b) -> if (cmp != 0) cmp else a.compareTo(b) } >= 0
+    }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.padding(16.dp)) {

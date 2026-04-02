@@ -1,6 +1,8 @@
 package com.nosedive.app.engine
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -66,6 +68,8 @@ class NoseDiveEngine private constructor(context: Context) {
     // BLE service reference for sending data
     var bleService: com.nosedive.app.ble.BLEService? = null
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
     init {
         val storagePath = File(context.filesDir, "nosedive_data.json").absolutePath
         nativeInit(storagePath)
@@ -99,9 +103,14 @@ class NoseDiveEngine private constructor(context: Context) {
     /**
      * Called from C++ via JNI when engine state changes.
      * Refreshes all state flows so Compose UI recomposes.
+     * JNI callbacks may arrive on arbitrary threads, so post to main.
      */
     fun onEngineStateChanged() {
-        refreshState()
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            refreshState()
+        } else {
+            mainHandler.post { refreshState() }
+        }
     }
 
     /**

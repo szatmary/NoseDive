@@ -42,12 +42,19 @@ void Engine::set_error_callback(ErrorCallback cb) {
 // --- Platform → Engine ---
 
 void Engine::receive_bytes(const uint8_t* data, size_t len) {
+    std::unique_lock lock(mu_);
     decoder_.feed(data, len);
+    std::vector<std::vector<uint8_t>> packets;
     while (decoder_.has_packet()) {
         auto payload = decoder_.pop();
         if (!payload.empty()) {
-            handle_payload(payload.data(), payload.size());
+            packets.push_back(std::move(payload));
         }
+    }
+    lock.unlock();
+
+    for (auto& payload : packets) {
+        handle_payload(payload.data(), payload.size());
     }
 }
 
@@ -213,7 +220,13 @@ void Engine::handle_fw_info(const FWVersionResponse& fw) {
 }
 
 void Engine::handle_ping_can(const uint8_t* data, size_t len) {
-    auto ping = vesc::PingCAN::Response::decode(data, len); if (ping) can_device_ids_ = ping->device_ids;
+    auto ping = vesc::PingCAN::Response::decode(data, len);
+    if (!ping) {
+        pending_errors_.push_back("Failed to decode PingCAN response");
+        pending_can_ = true;
+        return;
+    }
+    can_device_ids_ = ping->device_ids;
     can_devices_.clear();
 
     pending_can_queries_.clear();

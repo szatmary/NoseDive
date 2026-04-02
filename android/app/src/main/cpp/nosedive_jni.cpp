@@ -188,15 +188,20 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetRefloatInfo(JNIEnv* env, jo
     jobjectArray arr = env->NewObjectArray(5, strClass, nullptr);
     if (!arr) return nullptr;
 
-    env->SetObjectArrayElement(arr, 0, env->NewStringUTF(ri.name));
+    auto setStr = [&](int idx, const char* s) {
+        jstring js = env->NewStringUTF(s);
+        env->SetObjectArrayElement(arr, idx, js);
+        env->DeleteLocalRef(js);
+    };
+    setStr(0, ri.name);
     char buf[8];
     snprintf(buf, sizeof(buf), "%d", ri.major);
-    env->SetObjectArrayElement(arr, 1, env->NewStringUTF(buf));
+    setStr(1, buf);
     snprintf(buf, sizeof(buf), "%d", ri.minor);
-    env->SetObjectArrayElement(arr, 2, env->NewStringUTF(buf));
+    setStr(2, buf);
     snprintf(buf, sizeof(buf), "%d", ri.patch);
-    env->SetObjectArrayElement(arr, 3, env->NewStringUTF(buf));
-    env->SetObjectArrayElement(arr, 4, env->NewStringUTF(ri.suffix));
+    setStr(3, buf);
+    setStr(4, ri.suffix);
 
     env->DeleteLocalRef(strClass);
     return arr;
@@ -223,18 +228,23 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetMainFW(JNIEnv* env, jobject
     jobjectArray arr = env->NewObjectArray(7, strClass, nullptr);
     if (!arr) { env->DeleteLocalRef(strClass); return nullptr; }
 
-    env->SetObjectArrayElement(arr, 0, env->NewStringUTF(fw.hw_name));
+    auto setStr = [&](int idx, const char* s) {
+        jstring js = env->NewStringUTF(s);
+        env->SetObjectArrayElement(arr, idx, js);
+        env->DeleteLocalRef(js);
+    };
+    setStr(0, fw.hw_name);
     char buf[16];
     snprintf(buf, sizeof(buf), "%d", fw.major);
-    env->SetObjectArrayElement(arr, 1, env->NewStringUTF(buf));
+    setStr(1, buf);
     snprintf(buf, sizeof(buf), "%d", fw.minor);
-    env->SetObjectArrayElement(arr, 2, env->NewStringUTF(buf));
-    env->SetObjectArrayElement(arr, 3, env->NewStringUTF(fw.uuid));
+    setStr(2, buf);
+    setStr(3, fw.uuid);
     snprintf(buf, sizeof(buf), "%d", fw.hw_type);
-    env->SetObjectArrayElement(arr, 4, env->NewStringUTF(buf));
+    setStr(4, buf);
     snprintf(buf, sizeof(buf), "%d", fw.custom_config_count);
-    env->SetObjectArrayElement(arr, 5, env->NewStringUTF(buf));
-    env->SetObjectArrayElement(arr, 6, env->NewStringUTF(fw.package_name));
+    setStr(5, buf);
+    setStr(6, fw.package_name);
 
     env->DeleteLocalRef(strClass);
     return arr;
@@ -283,8 +293,12 @@ Java_com_nosedive_app_engine_NoseDiveEngine_nativeGetActiveBoard(JNIEnv* env, jo
     jobjectArray arr = env->NewObjectArray(2, strClass, nullptr);
     if (!arr) { env->DeleteLocalRef(strClass); return nullptr; }
 
-    env->SetObjectArrayElement(arr, 0, env->NewStringUTF(b.id));
-    env->SetObjectArrayElement(arr, 1, env->NewStringUTF(b.name));
+    jstring jsId = env->NewStringUTF(b.id);
+    env->SetObjectArrayElement(arr, 0, jsId);
+    env->DeleteLocalRef(jsId);
+    jstring jsName = env->NewStringUTF(b.name);
+    env->SetObjectArrayElement(arr, 1, jsName);
+    env->DeleteLocalRef(jsName);
 
     env->DeleteLocalRef(strClass);
     return arr;

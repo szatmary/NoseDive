@@ -138,30 +138,36 @@ void nd_engine_destroy(nd_engine_t* e) {
 // --- Platform → Engine ---
 
 void nd_engine_receive_bytes(nd_engine_t* e, const uint8_t* data, size_t len) {
+    if (!e || !data || len == 0) return;
     e->engine.receive_bytes(data, len);
 }
 
 void nd_engine_on_connected(nd_engine_t* e, size_t mtu) {
+    if (!e) return;
     e->engine.on_connected(mtu);
 }
 
 void nd_engine_on_disconnected(nd_engine_t* e) {
+    if (!e) return;
     e->engine.on_disconnected();
 }
 
 // --- Actions ---
 
 void nd_engine_install_refloat(nd_engine_t* e) {
+    if (!e) return;
     e->engine.install_refloat();
 }
 
 void nd_engine_dismiss_wizard(nd_engine_t* e) {
+    if (!e) return;
     e->engine.dismiss_wizard();
 }
 
 // --- Callbacks ---
 
 void nd_engine_set_write_callback(nd_engine_t* e, nd_write_cb cb, void* ctx) {
+    if (!e) return;
     e->write_cb = cb;
     e->write_ctx = ctx;
     e->engine.set_write_callback([e](const uint8_t* data, size_t len) {
@@ -170,6 +176,7 @@ void nd_engine_set_write_callback(nd_engine_t* e, nd_write_cb cb, void* ctx) {
 }
 
 void nd_engine_set_telemetry_callback(nd_engine_t* e, nd_telemetry_cb cb, void* ctx) {
+    if (!e) return;
     e->telemetry_cb = cb;
     e->telemetry_ctx = ctx;
     e->engine.set_telemetry_callback([e](const nosedive::Telemetry& t) {
@@ -193,6 +200,7 @@ void nd_engine_set_telemetry_callback(nd_engine_t* e, nd_telemetry_cb cb, void* 
 }
 
 void nd_engine_set_board_callback(nd_engine_t* e, nd_board_cb cb, void* ctx) {
+    if (!e) return;
     e->board_cb = cb;
     e->board_ctx = ctx;
     e->engine.set_board_callback([e](const nosedive::Board& board, const nosedive::FWVersionResponse& fw, bool show_wizard, bool is_known) {
@@ -214,6 +222,7 @@ void nd_engine_set_board_callback(nd_engine_t* e, nd_board_cb cb, void* ctx) {
 }
 
 void nd_engine_set_refloat_callback(nd_engine_t* e, nd_refloat_cb cb, void* ctx) {
+    if (!e) return;
     e->refloat_cb = cb;
     e->refloat_ctx = ctx;
     e->engine.set_refloat_callback([e](bool has_refloat, const std::optional<nosedive::RefloatInfo>& info, bool installing, bool installed) {
@@ -234,6 +243,7 @@ void nd_engine_set_refloat_callback(nd_engine_t* e, nd_refloat_cb cb, void* ctx)
 }
 
 void nd_engine_set_can_callback(nd_engine_t* e, nd_can_cb cb, void* ctx) {
+    if (!e) return;
     e->can_cb = cb;
     e->can_ctx = ctx;
     e->engine.set_can_callback([e](const std::vector<uint8_t>& ids) {
@@ -243,6 +253,7 @@ void nd_engine_set_can_callback(nd_engine_t* e, nd_can_cb cb, void* ctx) {
 }
 
 void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx) {
+    if (!e) return;
     e->error_cb = cb;
     e->error_ctx = ctx;
     e->engine.set_error_callback([e](const char* msg) {
@@ -270,6 +281,7 @@ static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
 }
 
 void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx) {
+    if (!e) return;
     e->engine.set_setup_callback([e, cb, ctx](const nosedive::SetupState& ws) {
         if (!cb) return;
         nd_setup_state_t cws = {};
@@ -280,10 +292,10 @@ void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx) {
     });
 }
 
-void nd_engine_setup_start(nd_engine_t* e)  { e->engine.setup_start(); }
-void nd_engine_setup_retry(nd_engine_t* e)  { e->engine.setup_retry(); }
-void nd_engine_setup_skip(nd_engine_t* e)   { e->engine.setup_skip(); }
-void nd_engine_setup_abort(nd_engine_t* e)  { e->engine.setup_abort(); }
+void nd_engine_setup_start(nd_engine_t* e)  { if (e) e->engine.setup_start(); }
+void nd_engine_setup_retry(nd_engine_t* e)  { if (e) e->engine.setup_retry(); }
+void nd_engine_setup_skip(nd_engine_t* e)   { if (e) e->engine.setup_skip(); }
+void nd_engine_setup_abort(nd_engine_t* e)  { if (e) e->engine.setup_abort(); }
 
 // --- Board fleet ---
 
@@ -328,6 +340,7 @@ void nd_engine_remove_profile(nd_engine_t* e, const char* id) {
 }
 
 const char* nd_engine_active_profile_id(const nd_engine_t* e) {
+    if (!e) return "";
     static thread_local std::string result;
     result = e->engine.active_profile_id();
     return result.c_str();

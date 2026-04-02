@@ -1,7 +1,20 @@
 #include "nosedive/setupboard.hpp"
 #include <cstdio>
+#include <string>
 
 namespace nosedive {
+
+static std::string fw_detail(const char* prefix, const vesc::FWVersion::Response& fw) {
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%s FW %d.%02d", prefix, fw.major, fw.minor);
+    std::string result = buf;
+    if (!fw.hw_name.empty()) {
+        result += " \xe2\x80\x94 "; // em-dash
+        result += fw.hw_name;
+    }
+    return result;
+}
+
 
 bool SetupBoard::is_running() const {
     return state_.step != SetupStep::Idle && state_.step != SetupStep::Done;
@@ -24,10 +37,7 @@ void SetupBoard::start() {
             bms_checked_ = true;
             // Skip to main VESC check
             if (main_fw) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                    main_fw->major, main_fw->minor, main_fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWVESC, buf);
+                set_step(SetupStep::CheckFWVESC, fw_detail("VESC", *main_fw));
                 advance();
             } else {
                 set_step(SetupStep::CheckFWVESC, "Checking VESC firmware...");
@@ -80,10 +90,7 @@ void SetupBoard::advance() {
         } else {
             bms_checked_ = true;
             if (main_fw) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                    main_fw->major, main_fw->minor, main_fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWVESC, buf);
+                set_step(SetupStep::CheckFWVESC, fw_detail("VESC", *main_fw));
                 advance(); // already have FW info, skip to next
                 return;
             }
@@ -94,10 +101,7 @@ void SetupBoard::advance() {
     case SetupStep::CheckFWBMS:
         bms_checked_ = true;
         if (main_fw) {
-            char buf[128];
-            std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                main_fw->major, main_fw->minor, main_fw->hw_name.c_str());
-            set_step(SetupStep::CheckFWVESC, buf);
+            set_step(SetupStep::CheckFWVESC, fw_detail("VESC", *main_fw));
             advance();
             return;
         }
@@ -212,10 +216,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     case SetupStep::CheckFWExpress:
         if (cmd == vesc::CommPacketID::FWVersion) {
             if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "Express FW %d.%02d — %s",
-                    fw->major, fw->minor, fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWExpress, buf);
+                set_step(SetupStep::CheckFWExpress, fw_detail("Express", *fw));
                 advance();
             } else {
                 set_error("Could not read Express firmware");
@@ -226,10 +227,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     case SetupStep::CheckFWBMS:
         if (cmd == vesc::CommPacketID::FWVersion) {
             if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "BMS FW %d.%02d — %s",
-                    fw->major, fw->minor, fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWBMS, buf);
+                set_step(SetupStep::CheckFWBMS, fw_detail("BMS", *fw));
                 advance();
             } else {
                 set_error("Could not read BMS firmware");
@@ -241,10 +239,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
         if (cmd == vesc::CommPacketID::FWVersion) {
             if (auto fw = vesc::FWVersion::Response::decode(data, len)) {
                 main_fw = *fw;
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "VESC FW %d.%02d — %s",
-                    fw->major, fw->minor, fw->hw_name.c_str());
-                set_step(SetupStep::CheckFWVESC, buf);
+                set_step(SetupStep::CheckFWVESC, fw_detail("VESC", *fw));
                 advance();
             } else {
                 set_error("Could not read VESC firmware");
@@ -331,8 +326,13 @@ std::optional<uint8_t> SetupBoard::find_express_id() const {
 }
 
 std::optional<uint8_t> SetupBoard::find_bms_id() const {
+    // Prefer the conventional BMS ID (10)
     for (auto id : can_device_ids) {
-        if (id >= 10 && id < 250) return id; // BMS is conventionally 10
+        if (id == 10) return id;
+    }
+    // Fallback: accept any non-Express CAN device in range
+    for (auto id : can_device_ids) {
+        if (id > 10 && id < 250) return id;
     }
     return std::nullopt;
 }

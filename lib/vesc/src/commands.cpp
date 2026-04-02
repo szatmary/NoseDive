@@ -4,6 +4,12 @@
 
 namespace vesc {
 
+static FaultCode safe_fault_code(uint8_t v) {
+    if (v <= static_cast<uint8_t>(FaultCode::EncoderSPI)) return static_cast<FaultCode>(v);
+    return FaultCode::None;
+}
+
+
 const char* fault_code_str(FaultCode f) {
     switch (f) {
         case FaultCode::None:                   return "NONE";
@@ -162,6 +168,7 @@ std::optional<FWVersion::Response> FWVersion::Response::decode(const uint8_t* da
 
 std::optional<GetValues::Response> GetValues::Response::decode(const uint8_t* data, size_t len) {
     if (len < 53) return std::nullopt;
+    if (data[0] != static_cast<uint8_t>(CommPacketID::GetValues)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));
     Response v;
     v.temp_mosfet       = buf.read_float16(10);
@@ -179,7 +186,7 @@ std::optional<GetValues::Response> GetValues::Response::decode(const uint8_t* da
     v.watt_hours_charged = buf.read_float32(10000);
     v.tachometer        = buf.read_int32();
     v.tachometer_abs    = buf.read_int32();
-    v.fault             = static_cast<FaultCode>(buf.read_uint8());
+    v.fault             = safe_fault_code(buf.read_uint8());
     return v;
 }
 
@@ -192,6 +199,7 @@ std::optional<PingCAN::Response> PingCAN::Response::decode(const uint8_t* data, 
 
 std::optional<GetIMUData::Response> GetIMUData::Response::decode(const uint8_t* data, size_t len) {
     if (len < 3) return std::nullopt;
+    if (data[0] != static_cast<uint8_t>(CommPacketID::GetIMUData)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));
     Response r;
     r.mask = buf.read_uint16();
@@ -227,6 +235,7 @@ std::optional<GetIMUData::Response> GetIMUData::Response::decode(const uint8_t* 
 
 std::optional<GetValuesSetup::Response> GetValuesSetup::Response::decode(const uint8_t* data, size_t len) {
     if (len < 60) return std::nullopt;
+    if (data[0] != static_cast<uint8_t>(CommPacketID::GetValuesSetup)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));
     Response r;
     r.temp_mosfet       = buf.read_float16(10);
@@ -256,6 +265,7 @@ std::optional<GetValuesSetup::Response> GetValuesSetup::Response::decode(const u
 
 std::optional<GetBatteryCut::Response> GetBatteryCut::Response::decode(const uint8_t* data, size_t len) {
     if (len < 9) return std::nullopt;
+    if (data[0] != static_cast<uint8_t>(CommPacketID::GetBatteryCut)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));
     Response r;
     r.voltage_start = buf.read_float32(1000);
@@ -265,6 +275,7 @@ std::optional<GetBatteryCut::Response> GetBatteryCut::Response::decode(const uin
 
 std::optional<DetectApplyAllFOC::Response> DetectApplyAllFOC::Response::decode(const uint8_t* data, size_t len) {
     if (len < 3) return std::nullopt;
+    if (data[0] != static_cast<uint8_t>(CommPacketID::DetectApplyAllFOC)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));
     Response r;
     r.result = buf.read_int16();
@@ -273,6 +284,7 @@ std::optional<DetectApplyAllFOC::Response> DetectApplyAllFOC::Response::decode(c
 
 std::optional<GetStats::Response> GetStats::Response::decode(const uint8_t* data, size_t len) {
     if (len < 5) return std::nullopt;
+    if (data[0] != static_cast<uint8_t>(CommPacketID::GetStats)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data + 1, data + len));
     Response r;
     r.mask = buf.read_uint32();
@@ -293,6 +305,7 @@ std::optional<GetStats::Response> GetStats::Response::decode(const uint8_t* data
 
 std::optional<GetCustomConfigXML::Response> GetCustomConfigXML::Response::decode(const uint8_t* data_ptr, size_t len) {
     if (len < 10) return std::nullopt;
+    if (data_ptr[0] != static_cast<uint8_t>(CommPacketID::GetCustomConfigXML)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data_ptr + 1, data_ptr + len));
     Response r;
     r.config_index = buf.read_uint8();
@@ -307,6 +320,7 @@ std::optional<GetCustomConfigXML::Response> GetCustomConfigXML::Response::decode
 
 std::optional<GetQMLUIApp::Response> GetQMLUIApp::Response::decode(const uint8_t* data_ptr, size_t len) {
     if (len < 9) return std::nullopt;
+    if (data_ptr[0] != static_cast<uint8_t>(CommPacketID::GetQMLUIApp)) return std::nullopt;
     Buffer buf(std::vector<uint8_t>(data_ptr + 1, data_ptr + len));
     Response r;
     r.total_size = buf.read_int32();

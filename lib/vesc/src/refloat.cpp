@@ -77,7 +77,7 @@ std::optional<RTData> parse_all_data(const uint8_t* data, size_t len, uint8_t mo
 
     // Byte 8: (switch_state & 0xF) | (beep_reason << 4)
     uint8_t switch_byte = buf.read_uint8();
-    rt.state.footpad = static_cast<FootpadState>(switch_byte & 0x0F);
+        { uint8_t fp = switch_byte & 0x0F; rt.state.footpad = fp <= 3 ? static_cast<FootpadState>(fp) : FootpadState::None; }
 
     // Byte 9-10: ADC
     rt.adc1 = static_cast<double>(buf.read_uint8()) / 50.0;
@@ -153,7 +153,7 @@ std::optional<RTData> parse_rt_data(const uint8_t* data, size_t len) {
 
     // Switch byte
     uint8_t switch_byte = buf.read_uint8();
-    rt.state.footpad = static_cast<FootpadState>(switch_byte & 0x0F);
+        { uint8_t fp = switch_byte & 0x0F; rt.state.footpad = fp <= 3 ? static_cast<FootpadState>(fp) : FootpadState::None; }
 
     rt.adc1 = buf.read_float32_auto();
     rt.adc2 = buf.read_float32_auto();

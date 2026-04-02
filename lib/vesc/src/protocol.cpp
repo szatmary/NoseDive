@@ -107,11 +107,17 @@ void Buffer::append_uint32(uint32_t v) {
 }
 
 void Buffer::append_float16(double v, double scale) {
-    append_int16(static_cast<int16_t>(v * scale));
+    double scaled = v * scale;
+    if (scaled > 32767.0) scaled = 32767.0;
+    if (scaled < -32768.0) scaled = -32768.0;
+    append_int16(static_cast<int16_t>(scaled));
 }
 
 void Buffer::append_float32(double v, double scale) {
-    append_int32(static_cast<int32_t>(v * scale));
+    double scaled = v * scale;
+    if (scaled > 2147483647.0) scaled = 2147483647.0;
+    if (scaled < -2147483648.0) scaled = -2147483648.0;
+    append_int32(static_cast<int32_t>(scaled));
 }
 
 void Buffer::append_float32_auto(double v) {
@@ -207,6 +213,12 @@ void PacketDecoder::feed(const uint8_t* data, size_t len) {
 
         packets_.push_back(std::move(result->payload));
         buf_.erase(buf_.begin(), buf_.begin() + static_cast<ptrdiff_t>(result->bytes_consumed));
+    }
+
+    // Prevent unbounded growth from malformed/incomplete data
+    static constexpr size_t kMaxBufferSize = 16384;
+    if (buf_.size() > kMaxBufferSize) {
+        buf_.erase(buf_.begin(), buf_.end() - static_cast<ptrdiff_t>(kMaxBufferSize / 2));
     }
 }
 
