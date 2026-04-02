@@ -371,20 +371,20 @@ static void test_parse_ping_can() {
 
 // --- Refloat info parsing ---
 static void test_parse_refloat_info() {
-    // [cmd=36][magic=0x65][cmdId=0][version=2][major=1][minor=3][patch=0]
-    // [name:20 bytes][suffix:20 bytes]
+    // Version 2 format: [cmd][magic][cmdId][version][flags][name:20][major][minor][patch][suffix:20]
     std::vector<uint8_t> payload;
     payload.push_back(36);   // COMM_CUSTOM_APP_DATA
     payload.push_back(0x65); // magic
     payload.push_back(0x00); // CommandInfo
     payload.push_back(2);    // version
+    payload.push_back(0);    // flags
+    // name: "Refloat" + padding to 20 bytes
+    std::string name = "Refloat";
+    for (size_t i = 0; i < 20; i++) payload.push_back(i < name.size() ? name[i] : 0);
     payload.push_back(1);    // major
     payload.push_back(3);    // minor
     payload.push_back(0);    // patch
-    // name: "Refloat" + padding
-    std::string name = "Refloat";
-    for (size_t i = 0; i < 20; i++) payload.push_back(i < name.size() ? name[i] : 0);
-    // suffix: "beta" + padding
+    // suffix: "beta" + padding to 20 bytes
     std::string suffix = "beta";
     for (size_t i = 0; i < 20; i++) payload.push_back(i < suffix.size() ? suffix[i] : 0);
 
@@ -411,10 +411,11 @@ static void test_command_builders() {
     ASSERT_EQ(can[2], 0, "build_fw_version_request_can: FWVersion cmd");
 
     auto refloat = vesc::build_refloat_info_request();
-    ASSERT_EQ(refloat.size(), 3u, "build_refloat_info_request: size");
+    ASSERT_EQ(refloat.size(), 4u, "build_refloat_info_request: size");
     ASSERT_EQ(refloat[0], 36, "build_refloat_info_request: CustomAppData");
     ASSERT_EQ(refloat[1], 0x65, "build_refloat_info_request: magic");
     ASSERT_EQ(refloat[2], 0x00, "build_refloat_info_request: CommandInfo");
+    ASSERT_EQ(refloat[3], 0x02, "build_refloat_info_request: version");
 }
 
 // --- Speed / battery computations ---
