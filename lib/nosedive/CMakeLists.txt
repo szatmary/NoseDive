@@ -4,13 +4,12 @@ project(nosedive VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Library sources
+# Depend on libvesc
+add_subdirectory(../vesc ${CMAKE_BINARY_DIR}/vesc)
+
+# Library sources (protocol files moved to libvesc)
 set(NOSEDIVE_SOURCES
-    src/crc.cpp
-    src/protocol.cpp
-    src/commands.cpp
     src/profile.cpp
-    src/refloat.cpp
     src/storage.cpp
     src/engine.cpp
 )
@@ -18,14 +17,17 @@ set(NOSEDIVE_SOURCES
 # Static library
 add_library(nosedive STATIC ${NOSEDIVE_SOURCES})
 target_include_directories(nosedive PUBLIC include)
+target_link_libraries(nosedive PUBLIC vesc)
 
 # C API shared library (for Android / Kotlin-JNI)
 add_library(nosedive_ffi SHARED src/ffi.cpp ${NOSEDIVE_SOURCES})
 target_include_directories(nosedive_ffi PUBLIC include)
+target_link_libraries(nosedive_ffi PUBLIC vesc)
 
 # C API static library (for iOS / Swift SPM linking)
 add_library(nosedive_ffi_static STATIC src/ffi.cpp ${NOSEDIVE_SOURCES})
 target_include_directories(nosedive_ffi_static PUBLIC include)
+target_link_libraries(nosedive_ffi_static PUBLIC vesc)
 set_target_properties(nosedive_ffi_static PROPERTIES OUTPUT_NAME nosedive_ffi)
 
 # iOS framework settings
@@ -53,6 +55,6 @@ option(NOSEDIVE_BUILD_TESTS "Build tests" ON)
 if(NOSEDIVE_BUILD_TESTS)
     enable_testing()
     add_executable(nosedive_tests tests/test_main.cpp src/ffi.cpp)
-    target_link_libraries(nosedive_tests PRIVATE nosedive)
+    target_link_libraries(nosedive_tests PRIVATE nosedive vesc)
     add_test(NAME nosedive_tests COMMAND nosedive_tests)
 endif()

@@ -195,7 +195,7 @@ void nd_engine_set_telemetry_callback(nd_engine_t* e, nd_telemetry_cb cb, void* 
 void nd_engine_set_board_callback(nd_engine_t* e, nd_board_cb cb, void* ctx) {
     e->board_cb = cb;
     e->board_ctx = ctx;
-    e->engine.set_board_callback([e](const nosedive::Board& board, const nosedive::FWVersion& fw, bool show_wizard, bool is_known) {
+    e->engine.set_board_callback([e](const nosedive::Board& board, const nosedive::FWVersionResponse& fw, bool show_wizard, bool is_known) {
         if (!e->board_cb) return;
         nd_board_event_t evt{};
         copy_str(evt.id, sizeof(evt.id), board.id);
@@ -249,6 +249,39 @@ void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx) {
         if (e->error_cb) e->error_cb(msg, e->error_ctx);
     });
 }
+
+// --- Wizard ---
+
+static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
+    switch (step) {
+        case nosedive::SetupStep::Idle:            return ND_SETUP_IDLE;
+        case nosedive::SetupStep::CheckFW:         return ND_SETUP_CHECK_FW;
+        case nosedive::SetupStep::InstallRefloat:  return ND_SETUP_INSTALL_REFLOAT;
+        case nosedive::SetupStep::DetectBattery:   return ND_SETUP_DETECT_BATTERY;
+        case nosedive::SetupStep::DetectFootpads:  return ND_SETUP_DETECT_FOOTPADS;
+        case nosedive::SetupStep::CalibrateIMU:    return ND_SETUP_CALIBRATE_IMU;
+        case nosedive::SetupStep::DetectMotor:     return ND_SETUP_DETECT_MOTOR;
+        case nosedive::SetupStep::ConfigureWheel:  return ND_SETUP_CONFIGURE_WHEEL;
+        case nosedive::SetupStep::Done:            return ND_SETUP_DONE;
+        default:                                    return ND_SETUP_IDLE;
+    }
+}
+
+void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx) {
+    e->engine.set_setup_callback([e, cb, ctx](const nosedive::SetupState& ws) {
+        if (!cb) return;
+        nd_setup_state_t cws = {};
+        cws.step = setup_step_to_c(ws.step);
+        copy_str(cws.error, sizeof(cws.error), ws.error);
+        copy_str(cws.detail, sizeof(cws.detail), ws.detail);
+        cb(cws, ctx);
+    });
+}
+
+void nd_engine_setup_start(nd_engine_t* e)  { e->engine.setup_start(); }
+void nd_engine_setup_retry(nd_engine_t* e)  { e->engine.setup_retry(); }
+void nd_engine_setup_skip(nd_engine_t* e)   { e->engine.setup_skip(); }
+void nd_engine_setup_abort(nd_engine_t* e)  { e->engine.setup_abort(); }
 
 // --- Board fleet ---
 

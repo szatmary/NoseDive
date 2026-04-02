@@ -98,6 +98,32 @@ void nd_engine_set_can_callback(nd_engine_t* e, nd_can_cb cb, void* ctx);
 typedef void (*nd_error_cb)(const char* message, void* ctx);
 void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx);
 
+// --- Setup ---
+typedef enum {
+    ND_SETUP_IDLE,
+    ND_SETUP_CHECK_FW,
+    ND_SETUP_INSTALL_REFLOAT,
+    ND_SETUP_DETECT_BATTERY,
+    ND_SETUP_DETECT_FOOTPADS,
+    ND_SETUP_CALIBRATE_IMU,
+    ND_SETUP_DETECT_MOTOR,
+    ND_SETUP_CONFIGURE_WHEEL,
+    ND_SETUP_DONE,
+} nd_setup_step_t;
+
+typedef struct {
+    nd_setup_step_t step;
+    char error[128];
+    char detail[256];
+} nd_setup_state_t;
+
+typedef void (*nd_setup_cb)(nd_setup_state_t state, void* ctx);
+void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx);
+void nd_engine_setup_start(nd_engine_t* e);
+void nd_engine_setup_retry(nd_engine_t* e);
+void nd_engine_setup_skip(nd_engine_t* e);
+void nd_engine_setup_abort(nd_engine_t* e);
+
 // --- Board fleet (persisted) ---
 typedef struct {
     char id[64];

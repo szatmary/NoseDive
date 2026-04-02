@@ -25,10 +25,10 @@ static int tests_passed = 0;
 static void test_crc16() {
     // Known VESC CRC: empty-ish payload
     uint8_t data[] = {0x04}; // COMM_GET_VALUES
-    uint16_t crc = nosedive::crc16(data, 1);
+    uint16_t crc = vesc::crc16(data, 1);
     // Just verify it returns something non-zero and deterministic
     ASSERT(crc != 0, "crc16 non-zero for non-empty input");
-    ASSERT_EQ(nosedive::crc16(data, 1), crc, "crc16 deterministic");
+    ASSERT_EQ(vesc::crc16(data, 1), crc, "crc16 deterministic");
 
     // (nd_crc16 removed from FFI — internal only)
 }
@@ -36,13 +36,13 @@ static void test_crc16() {
 // --- Packet encode/decode round-trip ---
 static void test_packet_roundtrip_short() {
     uint8_t payload[] = {0x04};
-    auto pkt = nosedive::encode_packet(payload, 1);
+    auto pkt = vesc::encode_packet(payload, 1);
     ASSERT(!pkt.empty(), "encode_packet short non-empty");
     ASSERT_EQ(pkt[0], 0x02, "short packet starts with 0x02");
     ASSERT_EQ(pkt[1], 1, "short packet length byte");
     ASSERT_EQ(pkt.back(), 0x03, "packet ends with 0x03");
 
-    auto decoded = nosedive::decode_packet(pkt.data(), pkt.size());
+    auto decoded = vesc::decode_packet(pkt.data(), pkt.size());
     ASSERT(decoded.has_value(), "decode_packet succeeds");
     ASSERT_EQ(decoded->payload.size(), 1u, "decoded payload size");
     ASSERT_EQ(decoded->payload[0], 0x04, "decoded payload content");
@@ -53,11 +53,11 @@ static void test_packet_roundtrip_long() {
     // Create a 300-byte payload (long packet)
     std::vector<uint8_t> payload(300, 0xAB);
     payload[0] = 0x14; // some command
-    auto pkt = nosedive::encode_packet(payload.data(), payload.size());
+    auto pkt = vesc::encode_packet(payload.data(), payload.size());
     ASSERT(!pkt.empty(), "encode_packet long non-empty");
     ASSERT_EQ(pkt[0], 0x03, "long packet starts with 0x03");
 
-    auto decoded = nosedive::decode_packet(pkt.data(), pkt.size());
+    auto decoded = vesc::decode_packet(pkt.data(), pkt.size());
     ASSERT(decoded.has_value(), "decode long packet succeeds");
     ASSERT_EQ(decoded->payload.size(), 300u, "decoded long payload size");
     ASSERT_EQ(decoded->payload[0], 0x14, "decoded long payload first byte");
@@ -65,41 +65,41 @@ static void test_packet_roundtrip_long() {
 
 // --- Buffer helpers ---
 static void test_buffer_int16() {
-    nosedive::Buffer buf;
+    vesc::Buffer buf;
     buf.append_int16(-1234);
     buf.append_int16(5678);
 
-    nosedive::Buffer reader(buf.vec());
+    vesc::Buffer reader(buf.vec());
     ASSERT_EQ(reader.read_int16(), -1234, "int16 round-trip negative");
     ASSERT_EQ(reader.read_int16(), 5678, "int16 round-trip positive");
 }
 
 static void test_buffer_int32() {
-    nosedive::Buffer buf;
+    vesc::Buffer buf;
     buf.append_int32(-123456);
     buf.append_uint32(0xDEADBEEF);
 
-    nosedive::Buffer reader(buf.vec());
+    vesc::Buffer reader(buf.vec());
     ASSERT_EQ(reader.read_int32(), -123456, "int32 round-trip");
     ASSERT_EQ(reader.read_uint32(), 0xDEADBEEFu, "uint32 round-trip");
 }
 
 static void test_buffer_float16() {
-    nosedive::Buffer buf;
+    vesc::Buffer buf;
     buf.append_float16(25.5, 10.0);
 
-    nosedive::Buffer reader(buf.vec());
+    vesc::Buffer reader(buf.vec());
     ASSERT_NEAR(reader.read_float16(10.0), 25.5, 0.11, "float16 round-trip");
 }
 
 static void test_buffer_float32_auto() {
-    nosedive::Buffer buf;
+    vesc::Buffer buf;
     double values[] = {0.0, 1.0, -1.0, 3.14159, 1e-7, 1e7};
     for (double v : values) {
         buf.append_float32_auto(v);
     }
 
-    nosedive::Buffer reader(buf.vec());
+    vesc::Buffer reader(buf.vec());
     for (double v : values) {
         double got = reader.read_float32_auto();
         if (v == 0.0) {
@@ -112,11 +112,11 @@ static void test_buffer_float32_auto() {
 }
 
 static void test_buffer_string() {
-    nosedive::Buffer buf;
+    vesc::Buffer buf;
     buf.append_string("hello");
     buf.append_string("world");
 
-    nosedive::Buffer reader(buf.vec());
+    vesc::Buffer reader(buf.vec());
     ASSERT(reader.read_string() == "hello", "string round-trip 1");
     ASSERT(reader.read_string() == "world", "string round-trip 2");
 }
@@ -209,10 +209,10 @@ static void test_profile_load() {
 
 // --- PacketDecoder tests ---
 static void test_packet_decoder_single() {
-    nosedive::PacketDecoder dec;
+    vesc::PacketDecoder dec;
 
     uint8_t payload[] = {0x04, 0x01};
-    auto pkt = nosedive::encode_packet(payload, 2);
+    auto pkt = vesc::encode_packet(payload, 2);
 
     dec.feed(pkt.data(), pkt.size());
     ASSERT(dec.has_packet(), "decoder has packet after full feed");
@@ -227,11 +227,11 @@ static void test_packet_decoder_single() {
 
 static void test_packet_decoder_chunked() {
     // Simulate BLE 20-byte MTU chunking
-    nosedive::PacketDecoder dec;
+    vesc::PacketDecoder dec;
 
     std::vector<uint8_t> payload(100, 0xAA);
     payload[0] = 0x14;
-    auto pkt = nosedive::encode_packet(payload.data(), payload.size());
+    auto pkt = vesc::encode_packet(payload.data(), payload.size());
 
     // Feed in 20-byte chunks
     size_t offset = 0;
@@ -248,12 +248,12 @@ static void test_packet_decoder_chunked() {
 }
 
 static void test_packet_decoder_multiple() {
-    nosedive::PacketDecoder dec;
+    vesc::PacketDecoder dec;
 
     uint8_t p1[] = {0x04};
     uint8_t p2[] = {0x00};
-    auto pkt1 = nosedive::encode_packet(p1, 1);
-    auto pkt2 = nosedive::encode_packet(p2, 1);
+    auto pkt1 = vesc::encode_packet(p1, 1);
+    auto pkt2 = vesc::encode_packet(p2, 1);
 
     // Feed both packets in one call
     std::vector<uint8_t> combined;
@@ -270,18 +270,18 @@ static void test_packet_decoder_multiple() {
 
 // --- Refloat tests ---
 static void test_refloat_command_builders() {
-    auto cmd = nosedive::refloat::build_get_all_data(2);
+    auto cmd = vesc::refloat::build_get_all_data(2);
     ASSERT_EQ(cmd.size(), 3u, "get_all_data size");
     ASSERT_EQ(cmd[0], 0x65, "magic byte");
     ASSERT_EQ(cmd[1], 10, "command ID = GetAllData");
     ASSERT_EQ(cmd[2], 2, "mode byte");
 
-    auto rt_cmd = nosedive::refloat::build_get_rt_data();
+    auto rt_cmd = vesc::refloat::build_get_rt_data();
     ASSERT_EQ(rt_cmd.size(), 2u, "get_rt_data size");
     ASSERT_EQ(rt_cmd[0], 0x65, "rt magic");
     ASSERT_EQ(rt_cmd[1], 1, "rt command ID");
 
-    auto info_cmd = nosedive::refloat::build_info_request();
+    auto info_cmd = vesc::refloat::build_info_request();
     ASSERT_EQ(info_cmd.size(), 3u, "info request size");
     ASSERT_EQ(info_cmd[0], 0x65, "info magic");
     ASSERT_EQ(info_cmd[1], 0, "info command ID");
@@ -289,7 +289,7 @@ static void test_refloat_command_builders() {
 }
 
 static void test_refloat_compat_decoders() {
-    using namespace nosedive::refloat;
+    using namespace vesc::refloat;
 
     // State compat: 0 = startup
     ASSERT(decode_state_compat(0) == RunState::Startup, "compat state 0 = startup");
@@ -338,13 +338,13 @@ static void test_parse_fw_version() {
     for (char c : std::string("Refloat")) payload.push_back(c);
     payload.push_back(0);
 
-    auto fw = nosedive::parse_fw_version(payload.data(), payload.size());
+    auto fw = vesc::FWVersion::Response::decode(payload.data(), payload.size());
     ASSERT(fw.has_value(), "parse_fw_version: success");
     ASSERT_EQ(fw->major, 6, "parse_fw_version: major");
     ASSERT_EQ(fw->minor, 5, "parse_fw_version: minor");
     ASSERT_EQ(fw->hw_name, "TestHW", "parse_fw_version: hw_name");
     ASSERT_EQ(fw->uuid.size(), 24u, "parse_fw_version: uuid length");
-    ASSERT_EQ(fw->hw_type, nosedive::HWType::VESC, "parse_fw_version: hw_type");
+    ASSERT_EQ(fw->hw_type, vesc::HWType::VESC, "parse_fw_version: hw_type");
     ASSERT_EQ(fw->custom_config_count, 1, "parse_fw_version: custom_config_count");
     ASSERT_EQ(fw->package_name, "Refloat", "parse_fw_version: package_name");
 
@@ -357,28 +357,30 @@ static void test_parse_fw_version() {
     express.push_back(0); // isPaired
     express.push_back(0); // fwTest
     express.push_back(3); // hwType = VESCExpress
-    auto fw2 = nosedive::parse_fw_version(express.data(), express.size());
+    auto fw2 = vesc::FWVersion::Response::decode(express.data(), express.size());
     ASSERT(fw2.has_value(), "parse_fw_version express: success");
-    ASSERT_EQ(fw2->hw_type, nosedive::HWType::VESCExpress, "parse_fw_version express: type");
+    ASSERT_EQ(fw2->hw_type, vesc::HWType::VESCExpress, "parse_fw_version express: type");
 
     // Too short
     uint8_t bad[] = {0x00, 6};
-    auto bad_result = nosedive::parse_fw_version(bad, 2);
+    auto bad_result = vesc::FWVersion::Response::decode(bad, 2);
     ASSERT(!bad_result.has_value(), "parse_fw_version: too short");
 }
 
 // --- CAN ping parsing ---
 static void test_parse_ping_can() {
     uint8_t payload[] = {62, 10, 253}; // cmd=PingCAN, ids: 10 (BMS), 253 (Express)
-    auto ids = nosedive::parse_ping_can(payload, 3);
-    ASSERT_EQ(ids.size(), 2u, "parse_ping_can: 2 devices");
-    ASSERT_EQ(ids[0], 10, "parse_ping_can: BMS");
-    ASSERT_EQ(ids[1], 253, "parse_ping_can: Express");
+    auto r = vesc::PingCAN::Response::decode(payload, 3);
+    ASSERT(r.has_value(), "parse_ping_can: decoded");
+    ASSERT_EQ(r->device_ids.size(), 2u, "parse_ping_can: 2 devices");
+    ASSERT_EQ(r->device_ids[0], 10, "parse_ping_can: BMS");
+    ASSERT_EQ(r->device_ids[1], 253, "parse_ping_can: Express");
 
     // Empty response
     uint8_t empty[] = {62};
-    auto none = nosedive::parse_ping_can(empty, 1);
-    ASSERT_EQ(none.size(), 0u, "parse_ping_can: empty");
+    auto none = vesc::PingCAN::Response::decode(empty, 1);
+    ASSERT(none.has_value(), "parse_ping_can: empty decoded");
+    ASSERT_EQ(none->device_ids.size(), 0u, "parse_ping_can: empty");
 }
 
 // --- Refloat info parsing ---
@@ -400,7 +402,7 @@ static void test_parse_refloat_info() {
     std::string suffix = "beta";
     for (size_t i = 0; i < 20; i++) payload.push_back(i < suffix.size() ? suffix[i] : 0);
 
-    auto info = nosedive::parse_refloat_info(payload.data(), payload.size());
+    auto info = vesc::parse_refloat_info(payload.data(), payload.size());
     ASSERT(info.has_value(), "parse_refloat_info: success");
     ASSERT_EQ(info->major, 1, "parse_refloat_info: major");
     ASSERT_EQ(info->minor, 3, "parse_refloat_info: minor");
@@ -412,17 +414,17 @@ static void test_parse_refloat_info() {
 
 // --- Command builders ---
 static void test_command_builders() {
-    auto cmd = nosedive::build_command(nosedive::CommPacketID::GetValues);
+    auto cmd = std::vector<uint8_t>{static_cast<uint8_t>(vesc::CommPacketID::GetValues)};
     ASSERT_EQ(cmd.size(), 1u, "build_command: size");
     ASSERT_EQ(cmd[0], 4, "build_command: GetValues");
 
-    auto can = nosedive::build_fw_version_request_can(253);
-    ASSERT_EQ(can.size(), 3u, "build_fw_version_request_can: size");
-    ASSERT_EQ(can[0], 34, "build_fw_version_request_can: ForwardCAN");
-    ASSERT_EQ(can[1], 253, "build_fw_version_request_can: target_id");
+    auto can = vesc::ForwardCAN::Request{.target_id = 253, .inner_payload = vesc::FWVersion::Request{}.encode()}.encode();
+    ASSERT_EQ(can.size(), 3u, "ForwardCAN encode: size");
+    ASSERT_EQ(can[0], 34, "ForwardCAN encode: cmd");
+    ASSERT_EQ(can[1], 253, "ForwardCAN encode: target_id");
     ASSERT_EQ(can[2], 0, "build_fw_version_request_can: FWVersion cmd");
 
-    auto refloat = nosedive::build_refloat_info_request();
+    auto refloat = vesc::build_refloat_info_request();
     ASSERT_EQ(refloat.size(), 3u, "build_refloat_info_request: size");
     ASSERT_EQ(refloat[0], 36, "build_refloat_info_request: CustomAppData");
     ASSERT_EQ(refloat[1], 0x65, "build_refloat_info_request: magic");
@@ -432,20 +434,20 @@ static void test_command_builders() {
 // --- Speed / battery computations ---
 static void test_computed_values() {
     // Speed from ERPM: erpm / (pole_pairs * 60 / wheel_circ)
-    double speed = nosedive::speed_from_erpm(10000, 15, 0.8778);
+    double speed = vesc::speed_from_erpm(10000, 15, 0.8778);
     ASSERT(speed > 0, "speed_from_erpm: positive");
     ASSERT_NEAR(speed, 10000.0 / (15.0 * 60.0 / 0.8778), 0.001, "speed_from_erpm: correct");
 
     // Edge cases
-    ASSERT_NEAR(nosedive::speed_from_erpm(0, 15, 0.88), 0.0, 0.001, "speed_from_erpm: zero erpm");
-    ASSERT_NEAR(nosedive::speed_from_erpm(1000, 0, 0.88), 0.0, 0.001, "speed_from_erpm: zero poles");
+    ASSERT_NEAR(vesc::speed_from_erpm(0, 15, 0.88), 0.0, 0.001, "speed_from_erpm: zero erpm");
+    ASSERT_NEAR(vesc::speed_from_erpm(1000, 0, 0.88), 0.0, 0.001, "speed_from_erpm: zero poles");
 
     // Battery percent
-    ASSERT_NEAR(nosedive::battery_percent(72.0, 60.0, 84.0), 50.0, 0.01, "battery_percent: 50%");
-    ASSERT_NEAR(nosedive::battery_percent(84.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: 100%");
-    ASSERT_NEAR(nosedive::battery_percent(60.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: 0%");
-    ASSERT_NEAR(nosedive::battery_percent(90.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: clamped max");
-    ASSERT_NEAR(nosedive::battery_percent(50.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: clamped min");
+    ASSERT_NEAR(vesc::battery_percent(72.0, 60.0, 84.0), 50.0, 0.01, "battery_percent: 50%");
+    ASSERT_NEAR(vesc::battery_percent(84.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: 100%");
+    ASSERT_NEAR(vesc::battery_percent(60.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: 0%");
+    ASSERT_NEAR(vesc::battery_percent(90.0, 60.0, 84.0), 100.0, 0.01, "battery_percent: clamped max");
+    ASSERT_NEAR(vesc::battery_percent(50.0, 60.0, 84.0), 0.0, 0.01, "battery_percent: clamped min");
 }
 
 static void test_storage_roundtrip() {
@@ -628,7 +630,7 @@ static void test_engine_payload() {
     fw_payload.push_back(0); // null terminator
     for (int i = 0; i < 12; i++) fw_payload.push_back(0xA0 + i); // UUID
 
-    auto framed = nosedive::encode_packet(fw_payload.data(), fw_payload.size());
+    auto framed = vesc::encode_packet(fw_payload.data(), fw_payload.size());
     ASSERT(!framed.empty(), "engine: framed FW response");
 
     // Feed raw bytes — engine decodes internally
