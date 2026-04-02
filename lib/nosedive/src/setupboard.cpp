@@ -1,4 +1,5 @@
 #include "nosedive/setupboard.hpp"
+#include <cmath>
 #include <cstdio>
 
 namespace nosedive {
@@ -507,18 +508,19 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
 // --- Battery / power helpers ---
 
 uint8_t SetupBoard::estimate_cell_count(double voltage) {
-    // Common Li-ion nominal voltage is ~3.6-3.8V/cell
-    // Estimate using 3.7V nominal, round to nearest common config
+    // Pick the common series count whose per-cell voltage is closest to
+    // 3.7V nominal, but only if the per-cell voltage falls within the
+    // valid Li-ion range (2.8-4.25V). This works at any state of charge.
     if (voltage <= 0) return 0;
-    int est = static_cast<int>(voltage / 3.7 + 0.5);
-    // Snap to common series counts: 15S, 16S, 18S, 20S, 21S, 24S
     static constexpr int common[] = {15, 16, 18, 20, 21, 24};
-    int best = est;
-    int best_diff = 100;
+    int best = 0;
+    double best_dist = 1e9;
     for (int c : common) {
-        int diff = std::abs(est - c);
-        if (diff < best_diff) {
-            best_diff = diff;
+        double cell_v = voltage / c;
+        if (cell_v < 2.8 || cell_v > 4.25) continue; // out of Li-ion range
+        double dist = std::fabs(cell_v - 3.7);
+        if (dist < best_dist) {
+            best_dist = dist;
             best = c;
         }
     }

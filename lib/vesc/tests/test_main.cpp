@@ -1,29 +1,32 @@
+#include <catch2/catch_test_macros.hpp>
 #include "vesc/vesc.hpp"
-#include <cstdio>
 
-int main() {
-    // Verify CRC16
+TEST_CASE("CRC16 is non-zero and deterministic", "[crc]") {
     uint8_t data[] = {0x04};
     uint16_t crc = vesc::crc16(data, 1);
-    if (crc == 0) { printf("FAIL: crc is zero\n"); return 1; }
+    REQUIRE(crc != 0);
+    REQUIRE(vesc::crc16(data, 1) == crc);
+}
 
-    // Verify encode/decode roundtrip
-    auto pkt = vesc::encode_packet(data, 1);
-    if (pkt.empty()) { printf("FAIL: encode empty\n"); return 1; }
+TEST_CASE("Packet encode/decode roundtrip", "[packet]") {
+    uint8_t payload[] = {0x04};
+    auto pkt = vesc::encode_packet(payload, 1);
+    REQUIRE_FALSE(pkt.empty());
 
     auto decoded = vesc::decode_packet(pkt.data(), pkt.size());
-    if (!decoded) { printf("FAIL: decode failed\n"); return 1; }
-    if (decoded->payload.size() != 1 || decoded->payload[0] != 0x04) {
-        printf("FAIL: roundtrip mismatch\n"); return 1;
-    }
+    REQUIRE(decoded.has_value());
+    REQUIRE(decoded->payload.size() == 1);
+    REQUIRE(decoded->payload[0] == 0x04);
+}
 
-    // Verify PacketDecoder
+TEST_CASE("PacketDecoder streaming", "[packet]") {
+    uint8_t payload[] = {0x04};
+    auto pkt = vesc::encode_packet(payload, 1);
+
     vesc::PacketDecoder decoder;
     decoder.feed(pkt.data(), pkt.size());
-    if (!decoder.has_packet()) { printf("FAIL: decoder no packet\n"); return 1; }
+    REQUIRE(decoder.has_packet());
     auto popped = decoder.pop();
-    if (popped.size() != 1 || popped[0] != 0x04) { printf("FAIL: decoder mismatch\n"); return 1; }
-
-    printf("All libvesc tests passed\n");
-    return 0;
+    REQUIRE(popped.size() == 1);
+    REQUIRE(popped[0] == 0x04);
 }

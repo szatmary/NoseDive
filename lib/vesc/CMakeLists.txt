@@ -21,8 +21,16 @@ target_link_libraries(vesc PUBLIC ZLIB::ZLIB)
 
 option(VESC_BUILD_TESTS "Build tests" ON)
 if(VESC_BUILD_TESTS)
+    include(FetchContent)
+    FetchContent_Declare(
+        Catch2
+        GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+        GIT_TAG        v3.5.2
+    )
+    FetchContent_MakeAvailable(Catch2)
+
     enable_testing()
     add_executable(vesc_tests tests/test_main.cpp)
-    target_link_libraries(vesc_tests PRIVATE vesc)
+    target_link_libraries(vesc_tests PRIVATE vesc Catch2::Catch2WithMain)
     add_test(NAME vesc_tests COMMAND vesc_tests)
 endif()
