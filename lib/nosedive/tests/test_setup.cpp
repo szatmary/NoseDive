@@ -1282,6 +1282,285 @@ static void test_bms_get_values_decode() {
            "bms_decode: rejects too-short payload");
 }
 
+// Helper: simulate factory reset protocol (GetMCConfDefault→SetMCConf→GetAppConfDefault→SetAppConf)
+static void simulate_factory_reset(nosedive::SetupBoard& setup) {
+    // GetMCConfDefault response
+    std::vector<uint8_t> mc_default;
+    mc_default.push_back(static_cast<uint8_t>(vesc::CommPacketID::GetMCConfDefault));
+    mc_default.resize(101, 0x11);
+    setup.handle_response(mc_default.data(), mc_default.size());
+
+    // SetMCConf ack
+    uint8_t mc_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::SetMCConf)};
+    setup.handle_response(mc_ack, sizeof(mc_ack));
+
+    // GetAppConfDefault response
+    std::vector<uint8_t> app_default;
+    app_default.push_back(static_cast<uint8_t>(vesc::CommPacketID::GetAppConfDefault));
+    app_default.resize(81, 0x22);
+    setup.handle_response(app_default.data(), app_default.size());
+
+    // SetAppConf ack
+    uint8_t app_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::SetAppConf)};
+    setup.handle_response(app_ack, sizeof(app_ack));
+}
+
+// Helper: build a fake COMM_GET_VALUES response with given voltage
+static std::vector<uint8_t> build_values_response(double voltage) {
+    vesc::Buffer buf;
+    buf.append_uint8(static_cast<uint8_t>(vesc::CommPacketID::GetValues));
+    buf.append_float16(28.0, 10);     // temp_mosfet
+    buf.append_float16(25.0, 10);     // temp_motor
+    buf.append_float32(0.0, 100);     // avg_motor_current
+    buf.append_float32(0.0, 100);     // avg_input_current
+    buf.append_float32(0.0, 100);     // avg_id
+    buf.append_float32(0.0, 100);     // avg_iq
+    buf.append_float16(0.0, 1000);    // duty_cycle
+    buf.append_float32(0.0, 1);       // rpm
+    buf.append_float16(voltage, 10);  // voltage
+    buf.append_float32(0.0, 10000);   // amp_hours
+    buf.append_float32(0.0, 10000);   // amp_hours_charged
+    buf.append_float32(0.0, 10000);   // watt_hours
+    buf.append_float32(0.0, 10000);   // watt_hours_charged
+    buf.append_int32(0);              // tachometer
+    buf.append_int32(0);              // tachometer_abs
+    buf.append_uint8(0);              // fault
+    return buf.take();
+}
+
+// Helper: build a fake COMM_GET_IMU_DATA response
+static std::vector<uint8_t> build_imu_response(double pitch, double roll) {
+    vesc::Buffer buf;
+    buf.append_uint8(static_cast<uint8_t>(vesc::CommPacketID::GetIMUData));
+    buf.append_uint16(0x001F);
+    buf.append_float32(roll, 1e6);    // roll
+    buf.append_float32(pitch, 1e6);   // pitch
+    buf.append_float32(0.0, 1e6);     // yaw
+    buf.append_float32(0.0, 1e6);     // accel_x
+    buf.append_float32(0.0, 1e6);     // accel_y
+    buf.append_float32(-9.81, 1e6);   // accel_z
+    buf.append_float32(0.0, 1e6);     // gyro_x
+    buf.append_float32(0.0, 1e6);     // gyro_y
+    buf.append_float32(0.0, 1e6);     // gyro_z
+    buf.append_float32(0.25, 1e6);    // mag_x
+    buf.append_float32(0.0, 1e6);     // mag_y
+    buf.append_float32(-0.45, 1e6);   // mag_z
+    buf.append_float32(1.0, 1e6);     // qw
+    buf.append_float32(0.0, 1e6);     // qx
+    buf.append_float32(0.0, 1e6);     // qy
+    buf.append_float32(0.0, 1e6);     // qz
+    return buf.take();
+}
+
+// Helper: build a fake COMM_DETECT_APPLY_ALL_FOC response
+static std::vector<uint8_t> build_motor_detect_response(int16_t result) {
+    vesc::Buffer buf;
+    buf.append_uint8(static_cast<uint8_t>(vesc::CommPacketID::DetectApplyAllFOC));
+    buf.append_int16(result);
+    return buf.take();
+}
+
+// --- Full end-to-end wizard test ---
+// Exercises every step with real protocol responses:
+//   Express FW update → BMS FW update → VESC FW update →
+//   Factory Reset → Refloat Install →
+//   DetectFootpads → CalibrateIMU → DetectMotor →
+//   ConfigureWheel → ConfigurePower (BMS) → Done
+static void test_full_e2e_wizard() {
+    nosedive::SetupBoard setup;
+
+    std::vector<nosedive::SetupStep> steps_seen;
+    std::vector<nosedive::StepPhase> phases_seen;
+    std::vector<std::string> titles_seen;
+    std::vector<std::vector<uint8_t>> sent;
+
+    setup.set_state_callback([&](const nosedive::SetupState& s) {
+        steps_seen.push_back(s.step);
+        phases_seen.push_back(s.phase);
+        titles_seen.push_back(s.title);
+    });
+    setup.set_send_callback([&](const std::vector<uint8_t>& p) {
+        sent.push_back(p);
+    });
+
+    // Board with Express (CAN 253), BMS (CAN 10), no existing Refloat
+    setup.can_device_ids = {10, 253};
+    setup.main_fw = std::nullopt;
+    setup.refloat_info = std::nullopt;
+    auto pkg = make_test_package();
+    setup.refloat_package = &pkg;
+
+    // ========== START ==========
+    setup.start();
+
+    // --- 1. FWExpress: outdated → update ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FWExpress),
+              "e2e: at FWExpress");
+    ASSERT(setup.state().title == "Express Firmware", "e2e: FWExpress title");
+
+    auto express_fw = build_fw_response(6, 5, "VESC Express T", 0xE0);
+    setup.handle_response(express_fw.data(), express_fw.size());
+    do_update_cycle(setup, "e2e_express",
+                    nosedive::SetupStep::FWExpress,
+                    6, 6, "VESC Express T", 0xE0);
+
+    // --- 2. FWBMS: outdated → update ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FWBMS),
+              "e2e: at FWBMS");
+    ASSERT(setup.state().title == "BMS Firmware", "e2e: FWBMS title");
+
+    auto bms_fw = build_fw_response(6, 5, "VESC BMS", 0xB0);
+    setup.handle_response(bms_fw.data(), bms_fw.size());
+    do_update_cycle(setup, "e2e_bms",
+                    nosedive::SetupStep::FWBMS,
+                    6, 6, "VESC BMS", 0xB0);
+
+    // --- 3. FWVESC: outdated → update ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
+              "e2e: at FWVESC");
+    ASSERT(setup.state().title == "Controller Firmware", "e2e: FWVESC title");
+
+    auto vesc_fw = build_fw_response(6, 5, "60_MK6", 0xA0);
+    setup.handle_response(vesc_fw.data(), vesc_fw.size());
+    do_update_cycle(setup, "e2e_vesc",
+                    nosedive::SetupStep::FWVESC,
+                    6, 6, "60_MK6", 0xA0);
+
+    // --- 4. FactoryReset: user confirms ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::FactoryReset),
+              "e2e: at FactoryReset");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "e2e: FactoryReset at Prompt");
+    ASSERT(setup.state().title == "Factory Reset", "e2e: FactoryReset title");
+
+    setup.update();
+    simulate_factory_reset(setup);
+
+    // --- 5. InstallRefloat: not installed → user installs ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
+              "e2e: at InstallRefloat");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "e2e: InstallRefloat at Prompt");
+    ASSERT(setup.state().detail.find("not installed") != std::string::npos,
+           "e2e: Refloat not installed");
+    ASSERT(setup.state().title == "Refloat Package", "e2e: InstallRefloat title");
+
+    setup.update();
+    simulate_refloat_install(setup);
+
+    // --- 6. DetectFootpads ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectFootpads),
+              "e2e: at DetectFootpads");
+    ASSERT(setup.state().title == "Footpad Sensors", "e2e: DetectFootpads title");
+
+    auto values_resp = build_values_response(75.6);
+    setup.handle_response(values_resp.data(), values_resp.size());
+
+    // --- 7. CalibrateIMU ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::CalibrateIMU),
+              "e2e: at CalibrateIMU");
+    ASSERT(setup.state().title == "IMU Calibration", "e2e: CalibrateIMU title");
+
+    auto imu_resp = build_imu_response(1.2, 0.5);
+    setup.handle_response(imu_resp.data(), imu_resp.size());
+
+    // --- 8. DetectMotor ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::DetectMotor),
+              "e2e: at DetectMotor");
+    ASSERT(setup.state().title == "Motor Detection", "e2e: DetectMotor title");
+
+    auto motor_resp = build_motor_detect_response(0); // success
+    setup.handle_response(motor_resp.data(), motor_resp.size());
+
+    // --- 9. ConfigureWheel ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigureWheel),
+              "e2e: at ConfigureWheel");
+    ASSERT(setup.state().title == "Wheel Setup", "e2e: ConfigureWheel title");
+
+    uint8_t mcconf_resp[] = {static_cast<uint8_t>(vesc::CommPacketID::GetMCConf)};
+    setup.handle_response(mcconf_resp, 1);
+
+    // --- 10. ConfigurePower (BMS present) ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::ConfigurePower),
+              "e2e: at ConfigurePower");
+    ASSERT(setup.state().title == "Battery Setup", "e2e: ConfigurePower title");
+
+    // Should have sent ForwardCAN + BMSGetValues
+    ASSERT(!sent.empty(), "e2e: sent BMS query");
+    auto& last_sent = sent.back();
+    ASSERT_EQ(last_sent[0], static_cast<uint8_t>(vesc::CommPacketID::ForwardCAN),
+              "e2e: sent ForwardCAN for BMS");
+
+    auto bms_resp = build_bms_response(20, 75.6, 0.0, 0.85);
+    setup.handle_response(bms_resp.data(), bms_resp.size());
+
+    // At Prompt with BMS info
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "e2e: ConfigurePower at Prompt");
+    ASSERT(setup.state().detail.find("20S") != std::string::npos,
+           "e2e: BMS detected 20S");
+
+    // User adjusts to 21S, then confirms
+    setup.set_cells(21);
+    ASSERT(setup.state().detail.find("21S") != std::string::npos,
+           "e2e: adjusted to 21S");
+
+    // Change back to 20S and confirm
+    setup.set_cells(20);
+    sent.clear();
+    setup.update();
+
+    // Verify SetBatteryCut was sent
+    bool sent_cut = false;
+    for (auto& p : sent) {
+        if (!p.empty() && p[0] == static_cast<uint8_t>(vesc::CommPacketID::SetBatteryCut))
+            sent_cut = true;
+    }
+    ASSERT(sent_cut, "e2e: sent SetBatteryCut");
+
+    // --- 11. Done ---
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
+              static_cast<uint8_t>(nosedive::SetupStep::Done),
+              "e2e: at Done");
+    ASSERT(setup.state().title == "Setup Complete", "e2e: Done title");
+    ASSERT(!setup.is_running(), "e2e: wizard not running after Done");
+
+    // Verify we hit every step
+    auto saw_step = [&](nosedive::SetupStep s) {
+        for (auto& st : steps_seen) if (st == s) return true;
+        return false;
+    };
+    ASSERT(saw_step(nosedive::SetupStep::FWExpress), "e2e: saw FWExpress");
+    ASSERT(saw_step(nosedive::SetupStep::FWBMS), "e2e: saw FWBMS");
+    ASSERT(saw_step(nosedive::SetupStep::FWVESC), "e2e: saw FWVESC");
+    ASSERT(saw_step(nosedive::SetupStep::FactoryReset), "e2e: saw FactoryReset");
+    ASSERT(saw_step(nosedive::SetupStep::InstallRefloat), "e2e: saw InstallRefloat");
+    ASSERT(saw_step(nosedive::SetupStep::DetectFootpads), "e2e: saw DetectFootpads");
+    ASSERT(saw_step(nosedive::SetupStep::CalibrateIMU), "e2e: saw CalibrateIMU");
+    ASSERT(saw_step(nosedive::SetupStep::DetectMotor), "e2e: saw DetectMotor");
+    ASSERT(saw_step(nosedive::SetupStep::ConfigureWheel), "e2e: saw ConfigureWheel");
+    ASSERT(saw_step(nosedive::SetupStep::ConfigurePower), "e2e: saw ConfigurePower");
+    ASSERT(saw_step(nosedive::SetupStep::Done), "e2e: saw Done");
+
+    // Verify every title was non-empty
+    for (auto& t : titles_seen) {
+        ASSERT(!t.empty(), "e2e: all titles non-empty");
+    }
+}
+
 int main() {
     test_setup_wizard();
     test_setup_wizard_with_can();
@@ -1301,6 +1580,7 @@ int main() {
     test_configure_power_no_bms();
     test_bms_get_values_decode();
     test_cell_count_estimation();
+    test_full_e2e_wizard();
 
     std::printf("\n%d/%d setup tests passed\n", tests_passed, tests_run);
     return tests_passed == tests_run ? 0 : 1;
