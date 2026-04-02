@@ -1,4 +1,5 @@
 # Build artifacts
+build/
 lib/nosedive/build/
 third_party/
 .claude/
