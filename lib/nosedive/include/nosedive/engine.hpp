@@ -75,6 +75,7 @@ public:
     void setup_retry();
     void setup_skip();
     void setup_update();
+    void setup_set_cells(uint8_t cells);
     void setup_abort();
 
     // --- Board CRUD (delegates to storage) ---

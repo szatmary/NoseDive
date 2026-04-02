@@ -399,6 +399,13 @@ void Engine::setup_update() {
     flush_pending(lock);
 }
 
+void Engine::setup_set_cells(uint8_t cells) {
+    std::unique_lock lock(mu_);
+    setup_.set_cells(cells);
+    pending_setup_ = true;
+    flush_pending(lock);
+}
+
 void Engine::setup_abort() {
     std::unique_lock lock(mu_);
     setup_.abort();

@@ -133,6 +133,7 @@ void nd_engine_setup_start(nd_engine_t* e);
 void nd_engine_setup_retry(nd_engine_t* e);
 void nd_engine_setup_skip(nd_engine_t* e);
 void nd_engine_setup_update(nd_engine_t* e);
+void nd_engine_setup_set_cells(nd_engine_t* e, uint8_t cells);
 void nd_engine_setup_abort(nd_engine_t* e);
 
 // Load a Refloat .vescpkg for the setup wizard. Returns true on success.

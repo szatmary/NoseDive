@@ -222,6 +222,17 @@ void SetupBoard::skip() {
     advance();
 }
 
+void SetupBoard::set_cells(uint8_t cells) {
+    if (state_.step != SetupStep::ConfigurePower) return;
+    if (state_.phase != StepPhase::Prompt) return;
+    if (cells == 0) return;
+    compute_cutoffs(cells);
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "%dS — set cutoffs %.1fV / %.1fV?",
+        cells, cutoff_start_, cutoff_end_);
+    set_state(SetupStep::ConfigurePower, StepPhase::Prompt, buf);
+}
+
 void SetupBoard::update() {
     if (state_.phase != StepPhase::Prompt) return;
 

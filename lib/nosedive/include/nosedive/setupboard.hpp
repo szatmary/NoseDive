@@ -140,6 +140,10 @@ public:
     /// Called by the engine when on_connected fires during WaitReconnect.
     void on_reconnected();
 
+    /// Change the detected cell count during ConfigurePower Prompt.
+    /// Recalculates cutoff voltages and updates the detail string.
+    void set_cells(uint8_t cells);
+
     /// Abort the wizard entirely.
     void abort();
 

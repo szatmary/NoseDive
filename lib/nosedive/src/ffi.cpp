@@ -295,6 +295,7 @@ void nd_engine_setup_start(nd_engine_t* e)  { e->engine.setup_start(); }
 void nd_engine_setup_retry(nd_engine_t* e)  { e->engine.setup_retry(); }
 void nd_engine_setup_skip(nd_engine_t* e)   { e->engine.setup_skip(); }
 void nd_engine_setup_update(nd_engine_t* e) { e->engine.setup_update(); }
+void nd_engine_setup_set_cells(nd_engine_t* e, uint8_t cells) { e->engine.setup_set_cells(cells); }
 void nd_engine_setup_abort(nd_engine_t* e)  { e->engine.setup_abort(); }
 
 bool nd_engine_load_refloat_package(nd_engine_t* e, const uint8_t* data, size_t len) {
