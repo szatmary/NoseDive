@@ -101,7 +101,9 @@ void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx);
 // --- Setup ---
 typedef enum {
     ND_SETUP_IDLE,
-    ND_SETUP_CHECK_FW,
+    ND_SETUP_CHECK_FW_EXPRESS,
+    ND_SETUP_CHECK_FW_BMS,
+    ND_SETUP_CHECK_FW_VESC,
     ND_SETUP_INSTALL_REFLOAT,
     ND_SETUP_DETECT_BATTERY,
     ND_SETUP_DETECT_FOOTPADS,

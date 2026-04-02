@@ -12,6 +12,7 @@ set(NOSEDIVE_SOURCES
     src/profile.cpp
     src/storage.cpp
     src/engine.cpp
+    src/setupboard.cpp
 )
 
 # Static library

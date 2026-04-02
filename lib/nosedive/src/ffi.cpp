@@ -255,7 +255,9 @@ void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx) {
 static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
     switch (step) {
         case nosedive::SetupStep::Idle:            return ND_SETUP_IDLE;
-        case nosedive::SetupStep::CheckFW:         return ND_SETUP_CHECK_FW;
+        case nosedive::SetupStep::CheckFWExpress: return ND_SETUP_CHECK_FW_EXPRESS;
+        case nosedive::SetupStep::CheckFWBMS: return ND_SETUP_CHECK_FW_BMS;
+        case nosedive::SetupStep::CheckFWVESC: return ND_SETUP_CHECK_FW_VESC;
         case nosedive::SetupStep::InstallRefloat:  return ND_SETUP_INSTALL_REFLOAT;
         case nosedive::SetupStep::DetectBattery:   return ND_SETUP_DETECT_BATTERY;
         case nosedive::SetupStep::DetectFootpads:  return ND_SETUP_DETECT_FOOTPADS;

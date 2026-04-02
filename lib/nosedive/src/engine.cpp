@@ -127,8 +127,11 @@ void Engine::handle_payload(const uint8_t* data, size_t len) {
         }
     }
 
-    // Feed response to wizard if it's running
-    setup_handle_response(data, len);
+    // Feed response to setup wizard if it's running
+    if (setup_.is_running()) {
+        setup_.handle_response(data, len);
+        pending_setup_ = true;
+    }
 
     flush_pending(lock);
 }
@@ -303,270 +306,55 @@ void Engine::set_active_profile_id(const std::string& id) {
     storage_.set_active_profile_id(id);
 }
 
-// --- Wizard ---
+// --- Setup wizard (delegates to SetupBoard) ---
 
 void Engine::set_setup_callback(SetupCallback cb) {
     std::lock_guard lock(mu_);
-    setup_cb_ = std::move(cb);
+    // SetupBoard fires state_cb synchronously — we use it to mark pending
+    setup_.set_state_callback([this](const SetupState& s) {
+        pending_setup_ = true;
+        if (s.step == SetupStep::Done && active_board_) {
+            active_board_->wizard_complete = true;
+            storage_.upsert_board(*active_board_);
+            show_wizard_ = false;
+        }
+    });
+    setup_.set_send_callback([this](const std::vector<uint8_t>& payload) {
+        queue_send(payload);
+    });
+    // Store the external callback — fired from flush_pending outside the lock
+    setup_external_cb_ = std::move(cb);
 }
 
 void Engine::setup_start() {
     std::unique_lock lock(mu_);
-    setup_state_ = {};
-    // FW version already queried on connect — if we have it, skip to next
-    if (main_fw_) {
-        setup_set_step(SetupStep::CheckFW,
-            "FW " + std::to_string(main_fw_->major) + "." +
-            std::to_string(main_fw_->minor) + " — " + main_fw_->hw_name);
-        setup_advance();
-    } else {
-        setup_set_step(SetupStep::CheckFW, "Checking firmware version...");
-        setup_run_step(lock);
-    }
+    setup_.can_device_ids = can_device_ids_;
+    setup_.main_fw = main_fw_;
+    setup_.has_refloat = main_fw_ && main_fw_->custom_config_count > 0;
+    setup_.start();
+    pending_setup_ = true;
     flush_pending(lock);
 }
 
 void Engine::setup_retry() {
     std::unique_lock lock(mu_);
-    setup_state_.error.clear();
-    // Re-enter the current step
-    auto step = setup_state_.step;
-    setup_state_.step = SetupStep::Idle;
-    setup_set_step(step, "Retrying...");
-    setup_run_step(lock);
+    setup_.retry();
+    pending_setup_ = true;
     flush_pending(lock);
 }
 
 void Engine::setup_skip() {
     std::unique_lock lock(mu_);
-    setup_state_.error.clear();
-    setup_advance();
+    setup_.skip();
+    pending_setup_ = true;
     flush_pending(lock);
 }
 
 void Engine::setup_abort() {
     std::unique_lock lock(mu_);
-    setup_set_step(SetupStep::Idle, "Wizard cancelled");
+    setup_.abort();
+    pending_setup_ = true;
     flush_pending(lock);
-}
-
-void Engine::setup_set_step(SetupStep step, const std::string& detail) {
-    setup_state_.step = step;
-    setup_state_.detail = detail;
-    setup_state_.error.clear();
-    pending_setup_ = true;
-}
-
-void Engine::setup_set_error(const std::string& error) {
-    setup_state_.error = error;
-    pending_setup_ = true;
-}
-
-void Engine::setup_advance() {
-    // Move to next step
-    auto next = static_cast<SetupStep>(static_cast<uint8_t>(setup_state_.step) + 1);
-    if (next > SetupStep::Done) next = SetupStep::Done;
-
-    switch (next) {
-    case SetupStep::CheckFW:
-        setup_set_step(next, "Checking firmware...");
-        break;
-    case SetupStep::InstallRefloat:
-        if (main_fw_ && main_fw_->custom_config_count > 0) {
-            // Refloat already installed — skip
-            setup_set_step(next, "Refloat already installed");
-            setup_advance();
-            return;
-        }
-        setup_set_step(next, "Installing Refloat package...");
-        break;
-    case SetupStep::DetectBattery:
-        setup_set_step(next, "Detecting battery configuration...");
-        break;
-    case SetupStep::DetectFootpads:
-        setup_set_step(next, "Detecting footpad sensors...");
-        break;
-    case SetupStep::CalibrateIMU:
-        setup_set_step(next, "Calibrating IMU...");
-        break;
-    case SetupStep::DetectMotor:
-        setup_set_step(next, "Detecting motor parameters...");
-        break;
-    case SetupStep::ConfigureWheel:
-        setup_set_step(next, "Configuring wheel...");
-        break;
-    case SetupStep::Done:
-        // Save the board to fleet
-        if (active_board_) {
-            active_board_->wizard_complete = true;
-            storage_.upsert_board(*active_board_);
-        }
-        show_wizard_ = false;
-        setup_set_step(SetupStep::Done, "Setup complete!");
-        return;
-    default:
-        break;
-    }
-
-    // Send commands for this step (lock is held by caller)
-    // Create a temporary lock reference since we need it for setup_run_step
-    // but we're called without one. Queue sends directly instead.
-    switch (setup_state_.step) {
-    case SetupStep::CheckFW:
-        queue_send(vesc::FWVersion::Request{}.encode());
-        break;
-    case SetupStep::InstallRefloat:
-        refloat_installing_ = true;
-        queue_send(std::vector<uint8_t>{static_cast<uint8_t>(CommPacketID::EraseNewApp)});
-        queue_send(std::vector<uint8_t>{static_cast<uint8_t>(CommPacketID::WriteNewAppData)});
-        break;
-    case SetupStep::DetectBattery:
-        queue_send(vesc::GetValues::Request{}.encode());
-        break;
-    case SetupStep::DetectFootpads:
-        queue_send(vesc::GetValues::Request{}.encode());
-        break;
-    case SetupStep::CalibrateIMU:
-        queue_send(vesc::GetIMUData::Request{.mask = 0x001F}.encode());
-        break;
-    case SetupStep::DetectMotor:
-        queue_send(vesc::DetectApplyAllFOC::Request{.detect_can = false, .max_power_loss = 1.0}.encode());
-        break;
-    case SetupStep::ConfigureWheel:
-        queue_send(std::vector<uint8_t>{static_cast<uint8_t>(CommPacketID::GetMCConf)});
-        break;
-    default:
-        break;
-    }
-}
-
-void Engine::setup_run_step(std::unique_lock<std::mutex>& /*lock*/) {
-    switch (setup_state_.step) {
-    case SetupStep::CheckFW:
-        queue_send(vesc::FWVersion::Request{}.encode());
-        break;
-    case SetupStep::InstallRefloat:
-        refloat_installing_ = true;
-        queue_send(std::vector<uint8_t>{static_cast<uint8_t>(CommPacketID::EraseNewApp)});
-        queue_send(std::vector<uint8_t>{static_cast<uint8_t>(CommPacketID::WriteNewAppData)});
-        break;
-    case SetupStep::DetectBattery:
-        queue_send(vesc::GetValues::Request{}.encode());
-        break;
-    case SetupStep::DetectFootpads: {
-        // Request ADC values to check footpads
-        auto req = vesc::GetValues::Request{}.encode();
-        queue_send(req);
-        break;
-    }
-    case SetupStep::CalibrateIMU: {
-        auto req = vesc::GetIMUData::Request{.mask = 0x001F}.encode();
-        queue_send(req);
-        break;
-    }
-    case SetupStep::DetectMotor: {
-        auto req = vesc::DetectApplyAllFOC::Request{
-            .detect_can = false,
-            .max_power_loss = 1.0,
-        }.encode();
-        queue_send(req);
-        break;
-    }
-    case SetupStep::ConfigureWheel:
-        // Read current MCConf to get wheel diameter
-        queue_send(std::vector<uint8_t>{static_cast<uint8_t>(CommPacketID::GetMCConf)});
-        break;
-    default:
-        break;
-    }
-}
-
-void Engine::setup_handle_response(const uint8_t* data, size_t len) {
-    if (setup_state_.step == SetupStep::Idle || setup_state_.step == SetupStep::Done) return;
-    if (len == 0) return;
-
-    auto cmd = static_cast<CommPacketID>(data[0]);
-
-    switch (setup_state_.step) {
-    case SetupStep::CheckFW:
-        if (cmd == CommPacketID::FWVersion) {
-            if (main_fw_) {
-                setup_set_step(SetupStep::CheckFW,
-                    "FW " + std::to_string(main_fw_->major) + "." +
-                    std::to_string(main_fw_->minor) + " — " + main_fw_->hw_name);
-                setup_advance();
-            } else {
-                setup_set_error("Could not read firmware version");
-            }
-        }
-        break;
-
-    case SetupStep::InstallRefloat:
-        if (cmd == CommPacketID::WriteNewAppData) {
-            refloat_installing_ = false;
-            refloat_installed_ = true;
-            setup_set_step(SetupStep::InstallRefloat, "Refloat installed");
-            setup_advance();
-        }
-        break;
-
-    case SetupStep::DetectBattery:
-        if (cmd == CommPacketID::GetValues) {
-            auto vals = vesc::GetValues::Response::decode(data, len);
-            if (vals) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "Battery: %.1fV detected", vals->voltage);
-                setup_set_step(SetupStep::DetectBattery, buf);
-                setup_advance();
-            } else {
-                setup_set_error("Could not read battery voltage");
-            }
-        }
-        break;
-
-    case SetupStep::DetectFootpads:
-        if (cmd == CommPacketID::GetValues) {
-            setup_set_step(SetupStep::DetectFootpads, "Footpad sensors detected");
-            setup_advance();
-        }
-        break;
-
-    case SetupStep::CalibrateIMU:
-        if (cmd == CommPacketID::GetIMUData) {
-            auto imu = vesc::GetIMUData::Response::decode(data, len);
-            if (imu) {
-                char buf[128];
-                std::snprintf(buf, sizeof(buf), "IMU OK — pitch=%.1f° roll=%.1f°", imu->pitch, imu->roll);
-                setup_set_step(SetupStep::CalibrateIMU, buf);
-                setup_advance();
-            } else {
-                setup_set_error("Could not read IMU data");
-            }
-        }
-        break;
-
-    case SetupStep::DetectMotor:
-        if (cmd == CommPacketID::DetectApplyAllFOC) {
-            auto result = vesc::DetectApplyAllFOC::Response::decode(data, len);
-            if (result && result->result >= 0) {
-                setup_set_step(SetupStep::DetectMotor, "Motor detected successfully");
-                setup_advance();
-            } else {
-                setup_set_error("Motor detection failed");
-            }
-        }
-        break;
-
-    case SetupStep::ConfigureWheel:
-        if (cmd == CommPacketID::GetMCConf) {
-            setup_set_step(SetupStep::ConfigureWheel, "Motor configuration read");
-            setup_advance();
-        }
-        break;
-
-    default:
-        break;
-    }
 }
 
 // --- Deferred work helpers ---
@@ -605,7 +393,7 @@ void Engine::flush_pending(std::unique_lock<std::mutex>& lock) {
     bool rf_installed = refloat_installed_;
     auto can_ids = can_device_ids_;
 
-    auto setup_flush_state = setup_state_;
+    auto setup_flush_state = setup_.state();
 
     // Snapshot callbacks
     auto write_cb = write_cb_;
@@ -614,7 +402,7 @@ void Engine::flush_pending(std::unique_lock<std::mutex>& lock) {
     auto refloat_cb = refloat_cb_;
     auto can_cb = can_cb_;
     auto error_cb = error_cb_;
-    auto setup_cb_flush = setup_cb_;
+    auto setup_ext_cb = setup_external_cb_;
 
     // Release lock BEFORE firing callbacks
     lock.unlock();
@@ -644,8 +432,8 @@ void Engine::flush_pending(std::unique_lock<std::mutex>& lock) {
     if (fire_can && can_cb) {
         can_cb(can_ids);
     }
-    if (fire_setup && setup_cb_flush) {
-        setup_cb_flush(setup_flush_state);
+    if (fire_setup && setup_ext_cb) {
+        setup_ext_cb(setup_flush_state);
     }
     for (auto& msg : errors) {
         if (error_cb) error_cb(msg.c_str());

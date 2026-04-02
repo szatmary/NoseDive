@@ -3,6 +3,7 @@
 #include "vesc/commands.hpp"
 #include "vesc/protocol.hpp"
 #include "nosedive/storage.hpp"
+#include "nosedive/setupboard.hpp"
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -38,27 +39,7 @@ struct CANDevice {
     FWVersionResponse fw;
 };
 
-/// Wizard steps
-enum class SetupStep : uint8_t {
-    Idle,
-    CheckFW,
-    InstallRefloat,
-    DetectBattery,
-    DetectFootpads,
-    CalibrateIMU,
-    DetectMotor,
-    ConfigureWheel,
-    Done,
-};
-
-/// Wizard state pushed to the UI
-struct SetupState {
-    SetupStep step = SetupStep::Idle;
-    std::string error;    // empty = no error
-    std::string detail;   // what's happening / what was detected
-};
-
-using SetupCallback = std::function<void(const SetupState&)>;
+// SetupStep, SetupState, SetupCallback are in setupboard.hpp
 
 /// The application engine. Owns all business logic, protocol codec, and state.
 /// Platform layer (Swift/Kotlin) feeds raw bytes in, receives parsed structs via callbacks.
@@ -135,17 +116,11 @@ private:
     bool refloat_installing_ = false;
     bool refloat_installed_ = false;
 
-    // Wizard
+    // Setup wizard
     bool show_wizard_ = false;
-    SetupCallback setup_cb_;
-    SetupState setup_state_;
+    SetupBoard setup_;
+    SetupCallback setup_external_cb_;
     bool pending_setup_ = false;
-
-    void setup_advance();
-    void setup_run_step(std::unique_lock<std::mutex>& lock);
-    void setup_set_step(SetupStep step, const std::string& detail = "");
-    void setup_set_error(const std::string& error);
-    void setup_handle_response(const uint8_t* data, size_t len);
 
     // Board type guess result (cached)
     mutable std::string guessed_type_cache_;
