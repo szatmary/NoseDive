@@ -13,10 +13,9 @@
 //   8. Detect motor parameters (R/L/flux)
 //   9. Configure wheel diameter
 //
-// The wizard sends VESC commands via a send callback and advances
-// when it receives the expected response. The engine feeds responses
-// to handle_response(). The wizard fires a state callback on each
-// step transition so the UI can update.
+// Each step has a phase: Working (actively doing something),
+// Prompt (waiting for user input), or WaitReconnect (board rebooting).
+// The UI uses step+phase to decide what to render.
 
 #include <vesc/commands.hpp>
 #include <vesc/vescpkg.hpp>
@@ -30,12 +29,10 @@ namespace nosedive {
 
 enum class SetupStep : uint8_t {
     Idle,
-    CheckFWExpress,     // Check VESC Express (BLE bridge) firmware
-    CheckFWBMS,         // Check BMS firmware
-    CheckFWVESC,        // Check VESC motor controller firmware
-    UpdateFW,           // Firmware update in progress
-    WaitReconnect,      // Waiting for board to reconnect after update
-    InstallRefloat,     // Install Refloat package if missing
+    FWExpress,          // VESC Express (BLE bridge) firmware
+    FWBMS,              // BMS firmware
+    FWVESC,             // VESC motor controller firmware
+    InstallRefloat,     // Install/update Refloat package
     DetectBattery,      // Read battery voltage, detect cell count
     DetectFootpads,     // Check footpad ADC sensors
     CalibrateIMU,       // Calibrate gyroscope and accelerometer
@@ -44,7 +41,14 @@ enum class SetupStep : uint8_t {
     Done,
 };
 
-// Which device is being updated
+// Where within a step the wizard is
+enum class StepPhase : uint8_t {
+    Working,            // Actively checking/uploading/detecting
+    Prompt,             // Waiting for user decision (update/skip/install)
+    WaitReconnect,      // Board rebooting after firmware update
+};
+
+// Which device a firmware step targets (derived from step)
 enum class UpdateTarget : uint8_t {
     None,
     Express,
@@ -82,6 +86,7 @@ struct LatestRefloat {
 
 struct SetupState {
     SetupStep step = SetupStep::Idle;
+    StepPhase phase = StepPhase::Working;
     std::string error;    // empty = no error
     std::string detail;   // what's happening / what was detected
 };
@@ -117,8 +122,8 @@ public:
     /// Skip the current step and advance.
     void skip();
 
-    /// Start firmware update for the current CheckFW step.
-    /// Transitions to UpdateFW → WaitReconnect.
+    /// Start firmware update or Refloat install for the current step.
+    /// Only valid when phase == Prompt.
     void update();
 
     /// Notify the wizard that the board has reconnected (after firmware update).
@@ -160,18 +165,16 @@ private:
     SetupCallback state_cb_;
     SetupSendCallback send_cb_;
 
-    void set_step(SetupStep step, const std::string& detail = "");
+    void set_state(SetupStep step, StepPhase phase, const std::string& detail = "");
     void set_error(const std::string& error);
     void advance();
-    void send_commands_for_step();
     void fire_callback();
 
     // Track which CAN devices we've checked
     bool express_checked_ = false;
     bool bms_checked_ = false;
 
-    // Firmware update state
-    UpdateTarget update_target_ = UpdateTarget::None;
+    // Cached firmware versions from CAN devices
     std::optional<vesc::FWVersion::Response> express_fw_;
     std::optional<vesc::FWVersion::Response> bms_fw_;
 
@@ -179,24 +182,21 @@ private:
     InstallPhase install_phase_ = InstallPhase::LispErase;
     size_t install_offset_ = 0;
 
-    // Per-target helpers (consolidate Express/BMS/VESC branching)
+    // Per-target helpers
     std::optional<uint8_t> find_can_id(UpdateTarget target) const;
     const char* label_for(UpdateTarget target) const;
     UpdateTarget target_for_step(SetupStep step) const;
-    SetupStep check_step_for(UpdateTarget target) const;
     std::optional<vesc::FWVersion::Response>& fw_for(UpdateTarget target);
     const std::optional<vesc::FWVersion::Response>& fw_for(UpdateTarget target) const;
     void latest_for(UpdateTarget target, uint8_t& major, uint8_t& minor) const;
 
-    // Send a FW version query to the given target
+    // FW step helpers
+    void begin_fw_check(SetupStep step);
     void send_fw_query(UpdateTarget target);
-    // Send erase+write commands to the given target
     void send_fw_update(UpdateTarget target);
-
-    // Check FW version, report to UI, return true if outdated
     bool check_and_report_fw(SetupStep step, UpdateTarget target);
-
-    // Common logic: advance from a CheckFW step to the next one or to VESC check
+    void handle_fw_response(const uint8_t* data, size_t len);
+    void handle_fw_update_response(vesc::CommPacketID cmd);
     void advance_to_next_fw_check();
 
     // Refloat install helpers

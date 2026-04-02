@@ -28,19 +28,10 @@ const char* SetupBoard::label_for(UpdateTarget target) const {
 
 UpdateTarget SetupBoard::target_for_step(SetupStep step) const {
     switch (step) {
-    case SetupStep::CheckFWExpress: return UpdateTarget::Express;
-    case SetupStep::CheckFWBMS:     return UpdateTarget::BMS;
-    case SetupStep::CheckFWVESC:    return UpdateTarget::VESC;
-    default:                        return UpdateTarget::None;
-    }
-}
-
-SetupStep SetupBoard::check_step_for(UpdateTarget target) const {
-    switch (target) {
-    case UpdateTarget::Express: return SetupStep::CheckFWExpress;
-    case UpdateTarget::BMS:     return SetupStep::CheckFWBMS;
-    case UpdateTarget::VESC:    return SetupStep::CheckFWVESC;
-    default:                    return SetupStep::Idle;
+    case SetupStep::FWExpress: return UpdateTarget::Express;
+    case SetupStep::FWBMS:     return UpdateTarget::BMS;
+    case SetupStep::FWVESC:    return UpdateTarget::VESC;
+    default:                   return UpdateTarget::None;
     }
 }
 
@@ -91,6 +82,7 @@ void SetupBoard::send_fw_update(UpdateTarget target) {
     }
 }
 
+// Check FW version, set state with result. Returns true if outdated.
 bool SetupBoard::check_and_report_fw(SetupStep step, UpdateTarget target) {
     auto& fw = fw_for(target);
     if (!fw) return false;
@@ -102,41 +94,71 @@ bool SetupBoard::check_and_report_fw(SetupStep step, UpdateTarget target) {
     if (outdated) {
         std::snprintf(buf, sizeof(buf), "%s FW %d.%02d — update available (%d.%02d)",
             label_for(target), fw->major, fw->minor, latest_major, latest_minor);
+        set_state(step, StepPhase::Prompt, buf);
     } else {
         std::snprintf(buf, sizeof(buf), "%s FW %d.%02d — %s — up to date",
             label_for(target), fw->major, fw->minor, fw->hw_name.c_str());
+        set_state(step, StepPhase::Working, buf);
     }
-    set_step(step, buf);
     return outdated;
 }
 
+// Start checking firmware for a step.
+void SetupBoard::begin_fw_check(SetupStep step) {
+    auto target = target_for_step(step);
+    auto& fw = fw_for(target);
+    if (fw) {
+        // Already have FW info — report and auto-advance if up to date
+        if (!check_and_report_fw(step, target)) {
+            advance();
+        }
+    } else {
+        set_state(step, StepPhase::Working,
+            std::string("Checking ") + label_for(target) + " firmware...");
+        send_fw_query(target);
+    }
+}
+
+// Handle FW version response during a FW check step (phase == Working).
+void SetupBoard::handle_fw_response(const uint8_t* data, size_t len) {
+    auto fw = vesc::FWVersion::Response::decode(data, len);
+    auto target = target_for_step(state_.step);
+    if (!fw) {
+        set_error(std::string("Could not read ") + label_for(target) + " firmware");
+        return;
+    }
+    fw_for(target) = *fw;
+    if (!check_and_report_fw(state_.step, target)) {
+        advance(); // Up to date — auto-advance
+    }
+    // If outdated, now at Prompt — user decides update/skip
+}
+
+// Handle WriteNewAppData ack during firmware update (phase == Working after update()).
+void SetupBoard::handle_fw_update_response(vesc::CommPacketID cmd) {
+    if (cmd == vesc::CommPacketID::WriteNewAppData) {
+        set_state(state_.step, StepPhase::WaitReconnect,
+            "Board is rebooting, waiting for reconnect...");
+    }
+}
+
 // Common logic for advancing through the FW check chain.
-// Called after completing CheckFWExpress or CheckFWBMS.
 void SetupBoard::advance_to_next_fw_check() {
     auto current = state_.step;
 
-    if (current == SetupStep::CheckFWExpress) {
+    if (current == SetupStep::FWExpress) {
         express_checked_ = true;
         if (find_can_id(UpdateTarget::BMS)) {
-            set_step(SetupStep::CheckFWBMS, "Checking BMS firmware...");
-            send_commands_for_step();
+            begin_fw_check(SetupStep::FWBMS);
             return;
         }
         bms_checked_ = true;
-    } else if (current == SetupStep::CheckFWBMS) {
+    } else if (current == SetupStep::FWBMS) {
         bms_checked_ = true;
     }
 
     // Fall through to VESC check
-    if (main_fw) {
-        if (!check_and_report_fw(SetupStep::CheckFWVESC, UpdateTarget::VESC)) {
-            advance(); // up to date, continue
-        }
-        // If outdated, pause — user must update() or skip()
-    } else {
-        set_step(SetupStep::CheckFWVESC, "Checking VESC firmware...");
-        send_commands_for_step();
-    }
+    begin_fw_check(SetupStep::FWVESC);
 }
 
 // --- Public API ---
@@ -145,75 +167,93 @@ void SetupBoard::start() {
     state_ = {};
     express_checked_ = false;
     bms_checked_ = false;
-    update_target_ = UpdateTarget::None;
     express_fw_ = std::nullopt;
     bms_fw_ = std::nullopt;
 
     if (find_can_id(UpdateTarget::Express)) {
-        set_step(SetupStep::CheckFWExpress, "Checking VESC Express firmware...");
-        send_commands_for_step();
+        begin_fw_check(SetupStep::FWExpress);
     } else if (find_can_id(UpdateTarget::BMS)) {
         express_checked_ = true;
-        set_step(SetupStep::CheckFWBMS, "Checking BMS firmware...");
-        send_commands_for_step();
+        begin_fw_check(SetupStep::FWBMS);
     } else {
         express_checked_ = true;
         bms_checked_ = true;
-        if (main_fw) {
-            if (!check_and_report_fw(SetupStep::CheckFWVESC, UpdateTarget::VESC)) {
-                advance();
-            }
-        } else {
-            set_step(SetupStep::CheckFWVESC, "Checking VESC firmware...");
-            send_commands_for_step();
-        }
+        begin_fw_check(SetupStep::FWVESC);
     }
 }
 
 void SetupBoard::retry() {
     state_.error.clear();
-    send_commands_for_step();
+    // Re-enter the current step's working phase
+    auto target = target_for_step(state_.step);
+    if (target != UpdateTarget::None) {
+        set_state(state_.step, StepPhase::Working,
+            std::string("Checking ") + label_for(target) + " firmware...");
+        send_fw_query(target);
+    } else if (state_.step == SetupStep::InstallRefloat) {
+        // Retry install from the beginning
+        set_state(SetupStep::InstallRefloat, StepPhase::Working,
+            "Installing Refloat package...");
+        install_phase_ = InstallPhase::LispErase;
+        install_offset_ = 0;
+        send_install_command();
+    }
     fire_callback();
 }
 
 void SetupBoard::skip() {
-    // Can skip Refloat update (outdated), but not fresh install
+    // Cannot skip fresh Refloat install (no existing version)
     if (state_.step == SetupStep::InstallRefloat && !refloat_info) return;
+    // FW steps and InstallRefloat require Prompt phase to skip
+    if (state_.phase != StepPhase::Prompt) {
+        auto target = target_for_step(state_.step);
+        if (target != UpdateTarget::None) return; // FW step not at Prompt
+        if (state_.step == SetupStep::InstallRefloat) return;
+    }
     state_.error.clear();
     advance();
 }
 
 void SetupBoard::update() {
-    // Refloat update: start the install sequence
+    if (state_.phase != StepPhase::Prompt) return;
+
+    // Refloat install/update
     if (state_.step == SetupStep::InstallRefloat) {
-        set_step(SetupStep::InstallRefloat, "Installing Refloat package...");
-        send_commands_for_step();
+        set_state(SetupStep::InstallRefloat, StepPhase::Working,
+            "Installing Refloat package...");
+        install_phase_ = InstallPhase::LispErase;
+        install_offset_ = 0;
+        send_install_command();
         return;
     }
 
-    update_target_ = target_for_step(state_.step);
-    if (update_target_ == UpdateTarget::None) return;
+    // Firmware update
+    auto target = target_for_step(state_.step);
+    if (target == UpdateTarget::None) return;
 
-    set_step(SetupStep::UpdateFW, "Uploading firmware...");
-    send_commands_for_step();
+    char buf[128];
+    std::snprintf(buf, sizeof(buf), "Uploading %s firmware...", label_for(target));
+    set_state(state_.step, StepPhase::Working, buf);
+    send_fw_update(target);
 }
 
 void SetupBoard::on_reconnected() {
-    if (state_.step != SetupStep::WaitReconnect) return;
+    if (state_.phase != StepPhase::WaitReconnect) return;
 
-    set_step(SetupStep::WaitReconnect, "Reconnected, verifying firmware...");
-    send_fw_query(update_target_);
+    auto target = target_for_step(state_.step);
+    set_state(state_.step, StepPhase::Working, "Reconnected, verifying firmware...");
+    send_fw_query(target);
 }
 
 void SetupBoard::abort() {
-    update_target_ = UpdateTarget::None;
-    set_step(SetupStep::Idle, "Setup cancelled");
+    set_state(SetupStep::Idle, StepPhase::Working, "Setup cancelled");
 }
 
 // --- Internal helpers ---
 
-void SetupBoard::set_step(SetupStep step, const std::string& detail) {
+void SetupBoard::set_state(SetupStep step, StepPhase phase, const std::string& detail) {
     state_.step = step;
+    state_.phase = phase;
     state_.detail = detail;
     state_.error.clear();
     fire_callback();
@@ -232,12 +272,13 @@ void SetupBoard::fire_callback() {
 
 void SetupBoard::advance() {
     switch (state_.step) {
-    case SetupStep::CheckFWExpress:
-    case SetupStep::CheckFWBMS:
+    case SetupStep::FWExpress:
+    case SetupStep::FWBMS:
         advance_to_next_fw_check();
         return;
 
-    case SetupStep::CheckFWVESC: {
+    case SetupStep::FWVESC: {
+        // Transition to InstallRefloat with appropriate prompt
         char buf[256];
         if (refloat_info) {
             bool outdated = LatestRefloat::is_outdated(
@@ -256,106 +297,60 @@ void SetupBoard::advance() {
                 "Refloat not installed — install %d.%d.%d?",
                 LatestRefloat::major, LatestRefloat::minor, LatestRefloat::patch);
         }
-        set_step(SetupStep::InstallRefloat, buf);
-        // Always pause — user must update() to install/update, skip() to continue
-        // (skip blocked when not installed)
-        return;
-    }
-
-    case SetupStep::UpdateFW:
-        set_step(SetupStep::WaitReconnect, "Board is rebooting, waiting for reconnect...");
-        return; // Don't send commands — waiting for external reconnect
-
-    case SetupStep::WaitReconnect: {
-        // Reconnect verified — resume from the CheckFW step that triggered update
-        auto resume = check_step_for(update_target_);
-        update_target_ = UpdateTarget::None;
-        state_.step = resume;
-        advance();
+        set_state(SetupStep::InstallRefloat, StepPhase::Prompt, buf);
         return;
     }
 
     case SetupStep::InstallRefloat:
-        set_step(SetupStep::DetectBattery, "Detecting battery...");
+        set_state(SetupStep::DetectBattery, StepPhase::Working, "Detecting battery...");
         break;
 
     case SetupStep::DetectBattery:
-        set_step(SetupStep::DetectFootpads, "Detecting footpad sensors...");
+        set_state(SetupStep::DetectFootpads, StepPhase::Working, "Detecting footpad sensors...");
         break;
 
     case SetupStep::DetectFootpads:
-        set_step(SetupStep::CalibrateIMU, "Calibrating IMU...");
+        set_state(SetupStep::CalibrateIMU, StepPhase::Working, "Calibrating IMU...");
         break;
 
     case SetupStep::CalibrateIMU:
-        set_step(SetupStep::DetectMotor, "Detecting motor parameters...");
+        set_state(SetupStep::DetectMotor, StepPhase::Working, "Detecting motor parameters...");
         break;
 
     case SetupStep::DetectMotor:
-        set_step(SetupStep::ConfigureWheel, "Configuring wheel...");
+        set_state(SetupStep::ConfigureWheel, StepPhase::Working, "Configuring wheel...");
         break;
 
     case SetupStep::ConfigureWheel:
-        set_step(SetupStep::Done, "Setup complete!");
+        set_state(SetupStep::Done, StepPhase::Working, "Setup complete!");
         return;
 
     default:
         break;
     }
 
-    send_commands_for_step();
-}
-
-void SetupBoard::send_commands_for_step() {
-    if (!send_cb_) return;
-
+    // Send commands for the new working step
     switch (state_.step) {
-    case SetupStep::CheckFWExpress:
-        send_fw_query(UpdateTarget::Express);
-        break;
-
-    case SetupStep::CheckFWBMS:
-        send_fw_query(UpdateTarget::BMS);
-        break;
-
-    case SetupStep::CheckFWVESC:
-        send_fw_query(UpdateTarget::VESC);
-        break;
-
-    case SetupStep::UpdateFW:
-        send_fw_update(update_target_);
-        break;
-
-    case SetupStep::InstallRefloat:
-        install_phase_ = InstallPhase::LispErase;
-        install_offset_ = 0;
-        send_install_command();
-        break;
-
     case SetupStep::DetectBattery:
     case SetupStep::DetectFootpads:
-        send_cb_(vesc::GetValues::Request{}.encode());
+        if (send_cb_) send_cb_(vesc::GetValues::Request{}.encode());
         break;
-
     case SetupStep::CalibrateIMU:
-        send_cb_(vesc::GetIMUData::Request{.mask = 0x001F}.encode());
+        if (send_cb_) send_cb_(vesc::GetIMUData::Request{.mask = 0x001F}.encode());
         break;
-
     case SetupStep::DetectMotor:
-        send_cb_(vesc::DetectApplyAllFOC::Request{
-            .detect_can = false,
-            .max_power_loss = 1.0
-        }.encode());
+        if (send_cb_) send_cb_(vesc::DetectApplyAllFOC::Request{
+            .detect_can = false, .max_power_loss = 1.0}.encode());
         break;
-
     case SetupStep::ConfigureWheel:
-        send_cb_({static_cast<uint8_t>(vesc::CommPacketID::GetMCConf)});
+        if (send_cb_) send_cb_({static_cast<uint8_t>(vesc::CommPacketID::GetMCConf)});
         break;
-
     default:
         break;
     }
 }
+
+// --- Response dispatch ---
 
 void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     if (!is_running() || len == 0) return;
@@ -363,64 +358,57 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
     auto cmd = static_cast<vesc::CommPacketID>(data[0]);
 
     switch (state_.step) {
-    case SetupStep::CheckFWExpress:
-    case SetupStep::CheckFWBMS:
-    case SetupStep::CheckFWVESC: {
-        if (cmd != vesc::CommPacketID::FWVersion) break;
-        auto fw = vesc::FWVersion::Response::decode(data, len);
-        if (!fw) {
-            set_error(std::string("Could not read ") + label_for(target_for_step(state_.step)) + " firmware");
-            break;
-        }
-        auto target = target_for_step(state_.step);
-        fw_for(target) = *fw;
-        if (!check_and_report_fw(state_.step, target)) {
-            advance(); // up to date
-        }
-        // If outdated, pause — user must update() or skip()
-        break;
-    }
-
-    case SetupStep::UpdateFW:
-        if (cmd == vesc::CommPacketID::WriteNewAppData) {
-            advance(); // → WaitReconnect
-        }
-        break;
-
-    case SetupStep::WaitReconnect:
-        if (cmd == vesc::CommPacketID::FWVersion) {
-            auto fw = vesc::FWVersion::Response::decode(data, len);
-            if (!fw) {
-                set_error("Could not verify firmware after update");
-                break;
+    // --- Firmware steps ---
+    case SetupStep::FWExpress:
+    case SetupStep::FWBMS:
+    case SetupStep::FWVESC:
+        if (state_.phase == StepPhase::Working) {
+            if (cmd == vesc::CommPacketID::FWVersion) {
+                handle_fw_response(data, len);
+            } else if (cmd == vesc::CommPacketID::WriteNewAppData) {
+                handle_fw_update_response(cmd);
             }
-            fw_for(update_target_) = *fw;
-            char buf[256];
-            std::snprintf(buf, sizeof(buf), "%s FW updated to %d.%02d",
-                label_for(update_target_), fw->major, fw->minor);
-            set_step(SetupStep::WaitReconnect, buf);
-            advance(); // → resume from check step
+        } else if (state_.phase == StepPhase::WaitReconnect) {
+            if (cmd == vesc::CommPacketID::FWVersion) {
+                auto fw = vesc::FWVersion::Response::decode(data, len);
+                if (!fw) {
+                    set_error("Could not verify firmware after update");
+                    break;
+                }
+                auto target = target_for_step(state_.step);
+                fw_for(target) = *fw;
+                char buf[256];
+                std::snprintf(buf, sizeof(buf), "%s FW updated to %d.%02d",
+                    label_for(target), fw->major, fw->minor);
+                set_state(state_.step, StepPhase::Prompt, buf);
+                // Now at Prompt — user skips to continue to next step
+                advance();
+            }
         }
         break;
 
+    // --- Refloat install ---
     case SetupStep::InstallRefloat:
-        handle_install_response(cmd, data, len);
+        if (state_.phase == StepPhase::Working) {
+            handle_install_response(cmd, data, len);
+        }
         break;
 
+    // --- Detection steps ---
     case SetupStep::DetectBattery:
         if (cmd == vesc::CommPacketID::GetValues) {
             auto v = vesc::GetValues::Response::decode(data, len);
             if (!v) { set_error("Could not read battery voltage"); break; }
             char buf[128];
             std::snprintf(buf, sizeof(buf), "Battery: %.1fV", v->voltage);
-            set_step(SetupStep::DetectBattery, buf);
+            set_state(SetupStep::DetectBattery, StepPhase::Working, buf);
             advance();
         }
         break;
 
     case SetupStep::DetectFootpads:
         if (cmd == vesc::CommPacketID::GetValues) {
-            set_step(SetupStep::DetectFootpads, "Footpad sensors OK");
+            set_state(SetupStep::DetectFootpads, StepPhase::Working, "Footpad sensors OK");
             advance();
         }
         break;
@@ -432,7 +420,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
             char buf[128];
             std::snprintf(buf, sizeof(buf), "IMU OK — pitch=%.1f° roll=%.1f°",
                 imu->pitch, imu->roll);
-            set_step(SetupStep::CalibrateIMU, buf);
+            set_state(SetupStep::CalibrateIMU, StepPhase::Working, buf);
             advance();
         }
         break;
@@ -442,7 +430,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
             auto r = vesc::DetectApplyAllFOC::Response::decode(data, len);
             if (!r) { set_error("Motor detection failed"); break; }
             if (r->result >= 0) {
-                set_step(SetupStep::DetectMotor, "Motor detected successfully");
+                set_state(SetupStep::DetectMotor, StepPhase::Working, "Motor detected successfully");
                 advance();
             } else {
                 char buf[64];
@@ -454,7 +442,7 @@ void SetupBoard::handle_response(const uint8_t* data, size_t len) {
 
     case SetupStep::ConfigureWheel:
         if (cmd == vesc::CommPacketID::GetMCConf) {
-            set_step(SetupStep::ConfigureWheel, "Configuration read");
+            set_state(SetupStep::ConfigureWheel, StepPhase::Working, "Configuration read");
             advance();
         }
         break;
@@ -471,7 +459,7 @@ void SetupBoard::send_install_command() {
 
     switch (install_phase_) {
     case InstallPhase::LispErase:
-        set_step(SetupStep::InstallRefloat, "Erasing Lisp code...");
+        set_state(SetupStep::InstallRefloat, StepPhase::Working, "Erasing Lisp code...");
         send_cb_({static_cast<uint8_t>(vesc::CommPacketID::LispEraseCode)});
         break;
 
@@ -487,9 +475,8 @@ void SetupBoard::send_install_command() {
         char buf[128];
         std::snprintf(buf, sizeof(buf), "Uploading Lisp code... %zu%%",
             install_offset_ * 100 / data.size());
-        set_step(SetupStep::InstallRefloat, buf);
+        set_state(SetupStep::InstallRefloat, StepPhase::Working, buf);
 
-        // [cmd(1), offset(4 BE), data(N)]
         std::vector<uint8_t> pkt;
         pkt.reserve(5 + chunk);
         pkt.push_back(static_cast<uint8_t>(vesc::CommPacketID::LispWriteCode));
@@ -504,13 +491,12 @@ void SetupBoard::send_install_command() {
     }
 
     case InstallPhase::QmlErase:
-        set_step(SetupStep::InstallRefloat, "Erasing QML UI...");
+        set_state(SetupStep::InstallRefloat, StepPhase::Working, "Erasing QML UI...");
         send_cb_({static_cast<uint8_t>(vesc::CommPacketID::QmluiErase)});
         break;
 
     case InstallPhase::QmlWrite: {
         if (!refloat_package || refloat_package->qml_data.empty()) {
-            // No QML data — skip to SetRunning
             install_phase_ = InstallPhase::SetRunning;
             send_install_command();
             return;
@@ -522,7 +508,7 @@ void SetupBoard::send_install_command() {
         char buf[128];
         std::snprintf(buf, sizeof(buf), "Uploading QML UI... %zu%%",
             install_offset_ * 100 / data.size());
-        set_step(SetupStep::InstallRefloat, buf);
+        set_state(SetupStep::InstallRefloat, StepPhase::Working, buf);
 
         std::vector<uint8_t> pkt;
         pkt.reserve(5 + chunk);
@@ -538,7 +524,7 @@ void SetupBoard::send_install_command() {
     }
 
     case InstallPhase::SetRunning:
-        set_step(SetupStep::InstallRefloat, "Starting Lisp runtime...");
+        set_state(SetupStep::InstallRefloat, StepPhase::Working, "Starting Lisp runtime...");
         send_cb_({static_cast<uint8_t>(vesc::CommPacketID::LispSetRunning), 1});
         break;
 
@@ -564,7 +550,6 @@ void SetupBoard::handle_install_response(vesc::CommPacketID cmd,
             size_t chunk = std::min(ld.size() - install_offset_, kUploadChunkSize);
             install_offset_ += chunk;
             if (install_offset_ >= ld.size()) {
-                // Lisp upload complete → erase QML
                 install_phase_ = InstallPhase::QmlErase;
                 install_offset_ = 0;
             }
@@ -599,7 +584,7 @@ void SetupBoard::handle_install_response(vesc::CommPacketID cmd,
             refloat_info = vesc::RefloatInfo{
                 "Refloat", LatestRefloat::major, LatestRefloat::minor,
                 LatestRefloat::patch, ""};
-            set_step(SetupStep::InstallRefloat, "Refloat installed");
+            set_state(SetupStep::InstallRefloat, StepPhase::Working, "Refloat installed");
             advance();
         }
         break;

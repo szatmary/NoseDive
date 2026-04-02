@@ -101,11 +101,9 @@ void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx);
 // --- Setup ---
 typedef enum {
     ND_SETUP_IDLE,
-    ND_SETUP_CHECK_FW_EXPRESS,
-    ND_SETUP_CHECK_FW_BMS,
-    ND_SETUP_CHECK_FW_VESC,
-    ND_SETUP_UPDATE_FW,
-    ND_SETUP_WAIT_RECONNECT,
+    ND_SETUP_FW_EXPRESS,
+    ND_SETUP_FW_BMS,
+    ND_SETUP_FW_VESC,
     ND_SETUP_INSTALL_REFLOAT,
     ND_SETUP_DETECT_BATTERY,
     ND_SETUP_DETECT_FOOTPADS,
@@ -115,8 +113,15 @@ typedef enum {
     ND_SETUP_DONE,
 } nd_setup_step_t;
 
+typedef enum {
+    ND_PHASE_WORKING,
+    ND_PHASE_PROMPT,
+    ND_PHASE_WAIT_RECONNECT,
+} nd_step_phase_t;
+
 typedef struct {
     nd_setup_step_t step;
+    nd_step_phase_t phase;
     char error[128];
     char detail[256];
 } nd_setup_state_t;

@@ -255,11 +255,9 @@ void nd_engine_set_error_callback(nd_engine_t* e, nd_error_cb cb, void* ctx) {
 static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
     switch (step) {
         case nosedive::SetupStep::Idle:            return ND_SETUP_IDLE;
-        case nosedive::SetupStep::CheckFWExpress: return ND_SETUP_CHECK_FW_EXPRESS;
-        case nosedive::SetupStep::CheckFWBMS: return ND_SETUP_CHECK_FW_BMS;
-        case nosedive::SetupStep::CheckFWVESC: return ND_SETUP_CHECK_FW_VESC;
-        case nosedive::SetupStep::UpdateFW:        return ND_SETUP_UPDATE_FW;
-        case nosedive::SetupStep::WaitReconnect:  return ND_SETUP_WAIT_RECONNECT;
+        case nosedive::SetupStep::FWExpress:       return ND_SETUP_FW_EXPRESS;
+        case nosedive::SetupStep::FWBMS:           return ND_SETUP_FW_BMS;
+        case nosedive::SetupStep::FWVESC:          return ND_SETUP_FW_VESC;
         case nosedive::SetupStep::InstallRefloat:  return ND_SETUP_INSTALL_REFLOAT;
         case nosedive::SetupStep::DetectBattery:   return ND_SETUP_DETECT_BATTERY;
         case nosedive::SetupStep::DetectFootpads:  return ND_SETUP_DETECT_FOOTPADS;
@@ -271,11 +269,21 @@ static nd_setup_step_t setup_step_to_c(nosedive::SetupStep step) {
     }
 }
 
+static nd_step_phase_t step_phase_to_c(nosedive::StepPhase phase) {
+    switch (phase) {
+        case nosedive::StepPhase::Working:        return ND_PHASE_WORKING;
+        case nosedive::StepPhase::Prompt:         return ND_PHASE_PROMPT;
+        case nosedive::StepPhase::WaitReconnect:  return ND_PHASE_WAIT_RECONNECT;
+        default:                                   return ND_PHASE_WORKING;
+    }
+}
+
 void nd_engine_set_setup_callback(nd_engine_t* e, nd_setup_cb cb, void* ctx) {
     e->engine.set_setup_callback([e, cb, ctx](const nosedive::SetupState& ws) {
         if (!cb) return;
         nd_setup_state_t cws = {};
         cws.step = setup_step_to_c(ws.step);
+        cws.phase = step_phase_to_c(ws.phase);
         copy_str(cws.error, sizeof(cws.error), ws.error);
         copy_str(cws.detail, sizeof(cws.detail), ws.detail);
         cb(cws, ctx);

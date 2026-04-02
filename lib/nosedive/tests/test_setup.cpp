@@ -71,10 +71,13 @@ static void test_setup_wizard() {
     // Start wizard — should skip Express, BMS, pause at VESC FW (outdated)
     setup.start();
 
-    // Should pause at CheckFWVESC because FW is outdated
+    // Should pause at FWVESC + Prompt because FW is outdated
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
-              "wizard: paused at CheckFWVESC (outdated)");
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
+              "wizard: paused at FWVESC (outdated)");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "wizard: phase is Prompt");
     ASSERT(setup.state().detail.find("update available") != std::string::npos,
            "wizard: detail mentions update available");
 
@@ -215,25 +218,31 @@ static void do_update_cycle(nosedive::SetupBoard& setup,
                             const char* hw_name, uint8_t uuid_base) {
     char msg[128];
 
-    // Should be paused at the check step
-    std::snprintf(msg, sizeof(msg), "%s: paused at check step (outdated)", label);
+    // Should be at Prompt phase on the check step
+    std::snprintf(msg, sizeof(msg), "%s: paused at check step (Prompt)", label);
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(expected_check_step), msg);
+    std::snprintf(msg, sizeof(msg), "%s: phase is Prompt", label);
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt), msg);
     std::snprintf(msg, sizeof(msg), "%s: detail mentions update available", label);
     ASSERT(setup.state().detail.find("update available") != std::string::npos, msg);
 
-    // User triggers update
+    // User triggers update — stays on same step, phase → Working
     setup.update();
-    std::snprintf(msg, sizeof(msg), "%s: at UpdateFW", label);
+    std::snprintf(msg, sizeof(msg), "%s: still at same step, Working", label);
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::UpdateFW), msg);
+              static_cast<uint8_t>(expected_check_step), msg);
+    std::snprintf(msg, sizeof(msg), "%s: phase is Working", label);
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Working), msg);
 
-    // Simulate WriteNewAppData ack → WaitReconnect
+    // Simulate WriteNewAppData ack → WaitReconnect phase
     uint8_t write_ack[] = {static_cast<uint8_t>(vesc::CommPacketID::WriteNewAppData)};
     setup.handle_response(write_ack, 1);
-    std::snprintf(msg, sizeof(msg), "%s: at WaitReconnect", label);
-    ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::WaitReconnect), msg);
+    std::snprintf(msg, sizeof(msg), "%s: phase is WaitReconnect", label);
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::WaitReconnect), msg);
 
     // Simulate reconnect
     setup.on_reconnected();
@@ -242,10 +251,10 @@ static void do_update_cycle(nosedive::SetupBoard& setup,
     auto fw_resp = build_fw_response(new_major, new_minor, hw_name, uuid_base);
     setup.handle_response(fw_resp.data(), fw_resp.size());
 
-    // Should have advanced past WaitReconnect
-    std::snprintf(msg, sizeof(msg), "%s: advanced past WaitReconnect", label);
-    ASSERT(setup.state().step != nosedive::SetupStep::WaitReconnect &&
-           setup.state().step != nosedive::SetupStep::UpdateFW, msg);
+    // Should have advanced past this step
+    std::snprintf(msg, sizeof(msg), "%s: advanced past check step", label);
+    ASSERT(setup.state().step != expected_check_step ||
+           setup.state().phase != nosedive::StepPhase::WaitReconnect, msg);
 }
 
 // --- Setup wizard with CAN devices: update all 3 firmware ---
@@ -269,46 +278,50 @@ static void test_setup_wizard_with_can() {
 
     // Should start with CheckFWExpress
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWExpress),
+              static_cast<uint8_t>(nosedive::SetupStep::FWExpress),
               "wizard_can: at CheckFWExpress");
 
     // --- Express: outdated 6.05 → update to 6.06 ---
     auto express_fw = build_fw_response(6, 5, "VESC Express T", 0xE0);
     setup.handle_response(express_fw.data(), express_fw.size());
     do_update_cycle(setup, "express_update",
-                    nosedive::SetupStep::CheckFWExpress,
+                    nosedive::SetupStep::FWExpress,
                     6, 6, "VESC Express T", 0xE0);
 
     // Should be at CheckFWBMS now
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWBMS),
+              static_cast<uint8_t>(nosedive::SetupStep::FWBMS),
               "wizard_can: at CheckFWBMS after Express update");
 
     // --- BMS: outdated 6.05 → update to 6.06 ---
     auto bms_fw = build_fw_response(6, 5, "VESC BMS", 0xB0);
     setup.handle_response(bms_fw.data(), bms_fw.size());
     do_update_cycle(setup, "bms_update",
-                    nosedive::SetupStep::CheckFWBMS,
+                    nosedive::SetupStep::FWBMS,
                     6, 6, "VESC BMS", 0xB0);
 
     // Should be at CheckFWVESC now
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "wizard_can: at CheckFWVESC after BMS update");
 
     // --- VESC: outdated 6.05 → update to 6.06 ---
     auto vesc_fw = build_fw_response(6, 5, "60_MK6", 0xA0);
     setup.handle_response(vesc_fw.data(), vesc_fw.size());
     do_update_cycle(setup, "vesc_update",
-                    nosedive::SetupStep::CheckFWVESC,
+                    nosedive::SetupStep::FWVESC,
                     6, 6, "60_MK6", 0xA0);
 
-    // Should advance to InstallRefloat (no Refloat)
+    // Should be at InstallRefloat + Prompt (no Refloat → "not installed")
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
               static_cast<uint8_t>(nosedive::SetupStep::InstallRefloat),
               "wizard_can: at InstallRefloat after all updates");
+    ASSERT_EQ(static_cast<uint8_t>(setup.state().phase),
+              static_cast<uint8_t>(nosedive::StepPhase::Prompt),
+              "wizard_can: InstallRefloat at Prompt");
 
-    // Simulate full Refloat install protocol
+    // User confirms install, then simulate protocol
+    setup.update();
     simulate_refloat_install(setup);
 
     // Should be past InstallRefloat now
@@ -334,7 +347,7 @@ static void test_setup_wizard_error() {
     setup.start();
     // Paused at CheckFWVESC (outdated) — skip to continue
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "wizard_err: paused at CheckFWVESC (outdated)");
     setup.skip();
     // Paused at InstallRefloat (up to date) — skip to continue
@@ -398,7 +411,7 @@ static void test_fw_check_outdated_pauses() {
     setup.start();
 
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "outdated: starts at CheckFWVESC");
 
     // Outdated VESC FW (6.05 < latest 6.06)
@@ -407,7 +420,7 @@ static void test_fw_check_outdated_pauses() {
 
     // Should STAY at CheckFWVESC
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "outdated: paused at CheckFWVESC");
     ASSERT(setup.state().detail.find("update available") != std::string::npos,
            "outdated: detail mentions update available");
@@ -415,7 +428,7 @@ static void test_fw_check_outdated_pauses() {
     // Skip should advance past it
     setup.skip();
     ASSERT(static_cast<uint8_t>(setup.state().step) >
-           static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+           static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
            "outdated: skip advances past CheckFWVESC");
 }
 
@@ -463,7 +476,7 @@ static void test_fw_update_flow() {
 
     // Run the full update→reconnect→verify cycle
     do_update_cycle(setup, "update_flow",
-                    nosedive::SetupStep::CheckFWVESC,
+                    nosedive::SetupStep::FWVESC,
                     6, 6, "60_MK6", 0xA0);
 
     // Should pause at InstallRefloat (up to date, awaiting confirmation)
@@ -493,7 +506,7 @@ static void test_prepopulated_outdated_fw() {
 
     // Should pause at CheckFWVESC because pre-populated FW is outdated
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "prepop_outdated: paused at CheckFWVESC");
     ASSERT(setup.state().detail.find("update available") != std::string::npos,
            "prepop_outdated: detail mentions update available");
@@ -513,7 +526,7 @@ static void test_express_fw_update() {
     setup.start();
 
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWExpress),
+              static_cast<uint8_t>(nosedive::SetupStep::FWExpress),
               "express_update: at CheckFWExpress");
 
     // Outdated Express FW (6.04)
@@ -522,12 +535,12 @@ static void test_express_fw_update() {
 
     // Run the full update→reconnect→verify cycle
     do_update_cycle(setup, "express_update",
-                    nosedive::SetupStep::CheckFWExpress,
+                    nosedive::SetupStep::FWExpress,
                     6, 6, "VESC Express T", 0xE0);
 
     // Should have advanced to CheckFWVESC (no BMS)
     ASSERT_EQ(static_cast<uint8_t>(setup.state().step),
-              static_cast<uint8_t>(nosedive::SetupStep::CheckFWVESC),
+              static_cast<uint8_t>(nosedive::SetupStep::FWVESC),
               "express_update: at CheckFWVESC after Express update");
 }
 

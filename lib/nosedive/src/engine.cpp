@@ -58,7 +58,7 @@ void Engine::on_connected(size_t mtu) {
 
     // If setup wizard is waiting for reconnect after FW update, notify it
     if (setup_.is_running() &&
-        setup_.state().step == SetupStep::WaitReconnect) {
+        setup_.state().phase == StepPhase::WaitReconnect) {
         setup_.on_reconnected();
         pending_setup_ = true;
         flush_pending(lock);
@@ -77,7 +77,7 @@ void Engine::on_disconnected() {
 
     // If setup wizard is waiting for reconnect after FW update, preserve it
     bool waiting_reconnect = setup_.is_running() &&
-        setup_.state().step == SetupStep::WaitReconnect;
+        setup_.state().phase == StepPhase::WaitReconnect;
 
     decoder_.reset();
     telemetry_ = {};
